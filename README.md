@@ -1,15 +1,17 @@
 # Research Analyser
 
-An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for PDF extraction, **PaperBanana** for diagram generation, and **Stanford Agentic Reviewer** for peer-review-quality analysis.
+An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for PDF extraction, **PaperBanana** for publication-quality diagram generation, **LangGraph Agentic Reviewer** for peer-review-quality analysis, and **PaperReview.ai** comparison for external review benchmarking.
 
 ## Features
 
-- **PDF Upload & URL Input** - Upload PDFs or paste paper URLs (arXiv, Semantic Scholar, DOI links)
-- **Intelligent OCR Extraction** - MonkeyOCR 1.5 extracts text, equations (LaTeX), tables, and figures with state-of-the-art accuracy
-- **AI Diagram Generation** - PaperBanana generates methodology diagrams, architecture overviews, and statistical plots
-- **Agentic Paper Review** - Stanford-style multi-dimensional scoring (Soundness, Presentation, Contribution)
-- **Structured Analysis Reports** - Markdown reports with key findings, equations, strengths/weaknesses, and visual summaries
-- **Spec-Driven Output** - Machine-readable `.md` files for downstream code generation or integration
+- **PDF Upload & URL Input** — Upload PDFs or paste paper URLs (arXiv, Semantic Scholar, DOI links)
+- **Intelligent OCR Extraction** — MonkeyOCR 1.5 extracts text, equations (LaTeX), tables, and figures with state-of-the-art accuracy
+- **AI Diagram Generation** — PaperBanana generates methodology diagrams, architecture overviews, and results plots using Gemini VLM + Imagen
+- **Agentic Paper Review** — LangGraph 9-node workflow with ML-calibrated scoring (Soundness, Presentation, Contribution)
+- **PaperReview.ai Comparison** — Upload external review JSON from [PaperReview.ai](https://paperreview.ai) to compare scores against local review
+- **Configurable API Keys** — Sidebar settings for Google (PaperBanana), OpenAI (Reviewer), and Tavily (Related Work Search) keys
+- **Structured Reports** — Markdown + HTML reports with key findings, equations, strengths/weaknesses, and visual summaries
+- **macOS DMG App** — Standalone desktop app bundled with PyInstaller
 
 ## Architecture
 
@@ -23,11 +25,11 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 │ URL      │ MonkeyOCR    │ PaperBanana   │ Markdown      │
 │ Fetcher  │ 1.5          │ Diagrams      │ Report        │
 ├──────────┼──────────────┼───────────────┼───────────────┤
-│ PDF      │ Text/LaTeX   │ Agentic       │ Key Points    │
+│ PDF      │ Text/LaTeX   │ LangGraph     │ Key Points    │
 │ Upload   │ Extraction   │ Reviewer      │ & Equations   │
 ├──────────┼──────────────┼───────────────┼───────────────┤
-│ arXiv    │ Table/Figure │ Summary       │ Diagrams      │
-│ Resolver │ Detection    │ Generator     │ (PNG/SVG)     │
+│ arXiv    │ Table/Figure │ PaperReview   │ Diagrams      │
+│ Resolver │ Detection    │ Comparison    │ (PNG/SVG)     │
 └──────────┴──────────────┴───────────────┴───────────────┘
 ```
 
@@ -35,40 +37,33 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.12 (recommended; 3.10+ supported)
 - CUDA-compatible GPU (for MonkeyOCR) or CPU fallback mode
-- API keys for PaperBanana diagram generation (OpenAI or Google Gemini)
+- API keys: Google Gemini (diagrams), OpenAI (review), Tavily (optional, related work search)
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/Research_Analyser.git
+git clone https://github.com/kp-algomaster/Research_Analyser.git
 cd Research_Analyser
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
+# Create virtual environment (Python 3.12 recommended)
+python3.12 -m venv .venv312
+source .venv312/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Install MonkeyOCR
-pip install monkeyocr
-
-# Install PaperBanana
-pip install paperbanana
-
-# Install Agentic Reviewer dependencies
-pip install langgraph langchain-openai tavily-python
+# Install MonkeyOCR and PaperBanana
+pip install monkeyocr paperbanana
 
 # Download MonkeyOCR model weights
 python -m monkeyocr.download --model MonkeyOCR-pro-3B
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your API keys
+# Edit .env with your API keys (GOOGLE_API_KEY, OPENAI_API_KEY, etc.)
 ```
 
 ### Run the Application
@@ -85,36 +80,68 @@ streamlit run app.py
 uvicorn research_analyser.api:app --host 0.0.0.0 --port 8000
 ```
 
+### Build macOS DMG
+
+```bash
+./scripts/build_macos_dmg.sh
+# Output: dist/ResearchAnalyser.dmg
+```
+
 ## Usage Examples
 
 ### CLI
 
 ```bash
-# Analyse a local PDF
-python -m research_analyser analyse paper.pdf --output ./reports/
+# Analyse with diagrams and review
+python -m research_analyser analyse https://arxiv.org/abs/2602.17002
 
-# Analyse from URL
-python -m research_analyser analyse https://arxiv.org/abs/2401.12345 --diagrams --review
+# Diagrams only (no review)
+python -m research_analyser analyse paper.pdf --diagrams --no-review -d methodology
 
-# Generate only diagrams
-python -m research_analyser diagrams paper.pdf --type methodology
-
-# Generate only review
-python -m research_analyser review paper.pdf --venue "ICLR 2026"
+# Review only (no diagrams)
+python -m research_analyser analyse paper.pdf --no-diagrams --review
 ```
+
+### Web UI
+
+The Streamlit UI provides:
+- **Sidebar** — Configure API keys (Google, OpenAI, Tavily), diagram types, provider, and venue
+- **Analysis** — Upload PDF or enter arXiv URL, click "Analyse Paper"
+- **PaperReview.ai Comparison** — Upload a review JSON from paperreview.ai to compare scores
 
 ### Python API
 
 ```python
-from research_analyser import ResearchAnalyser
+import asyncio
+from research_analyser.analyser import ResearchAnalyser
+from research_analyser.models import AnalysisOptions
 
 analyser = ResearchAnalyser()
-report = analyser.analyse("paper.pdf", generate_diagrams=True, generate_review=True)
+options = AnalysisOptions(generate_diagrams=True, generate_review=True)
+report = asyncio.run(analyser.analyse("https://arxiv.org/abs/2602.17002", options=options))
 
-print(report.summary)
-print(report.key_equations)
-report.save("./output/")
+print(report.summary.one_sentence)
+print(f"Review score: {report.review.overall_score:.1f}/10")
 ```
+
+### PaperReview.ai Comparison
+
+Upload external review JSON with this format:
+```json
+{
+  "overall_score": 6.9,
+  "soundness": 3.1,
+  "presentation": 3.0,
+  "contribution": 3.2,
+  "confidence": 3.5
+}
+```
+
+## Review Scoring Formula
+
+$$\text{score} = -0.3057 + 0.7134 \times S + 0.4242 \times P + 1.0588 \times C$$
+
+Where $S$ = Soundness, $P$ = Presentation, $C$ = Contribution (each on 1–4 scale). Output maps to 1–10 overall score.
 
 ## Output Structure
 
