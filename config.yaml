@@ -1,0 +1,37 @@
+app:
+  name: "Research Analyser"
+  output_dir: "./output"
+  temp_dir: "./tmp"
+  log_level: "INFO"
+
+ocr:
+  model: "MonkeyOCR-pro-3B"
+  device: "auto"                  # "cuda", "cpu", or "auto"
+  page_split: true
+  output_format: "markdown"
+
+diagrams:
+  provider: "google"              # "openai", "google", "openrouter"
+  vlm_model: "gemini-2.0-flash"
+  image_model: "gemini-3-pro-image-preview"
+  optimize_inputs: true
+  auto_refine: true
+  max_iterations: 3
+  output_format: "png"
+  resolution: "2k"
+
+review:
+  llm_provider: "openai"
+  model: "gpt-4o"
+  use_tavily: true
+  scoring_weights:
+    soundness: 0.7134
+    presentation: 0.4242
+    contribution: 1.0588
+  intercept: -0.3057
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  max_upload_size_mb: 100
+  job_timeout_seconds: 600

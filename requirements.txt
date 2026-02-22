@@ -1,0 +1,46 @@
+# Core
+python-dotenv>=1.0.0
+pydantic>=2.0
+pydantic-settings>=2.0
+pyyaml>=6.0
+aiohttp>=3.9
+aiofiles>=23.0
+httpx>=0.25
+
+# OCR - MonkeyOCR
+# Install separately: pip install monkeyocr
+# Model download: python -m monkeyocr.download --model MonkeyOCR-pro-3B
+torch>=2.1
+torchvision>=0.16
+PyMuPDF>=1.23
+
+# Diagram Generation - PaperBanana
+# Install separately: pip install paperbanana
+# Or: pip install paperbanana[google] for Gemini free tier
+
+# Agentic Paper Review
+langgraph>=0.2
+langchain>=0.2
+langchain-openai>=0.1
+langchain-community>=0.2
+scikit-learn>=1.3
+tavily-python>=0.3
+
+# Web UI
+streamlit>=1.30
+
+# API Server
+fastapi>=0.100
+uvicorn[standard]>=0.24
+python-multipart>=0.0.6
+
+# Utilities
+rich>=13.0             # CLI output formatting
+click>=8.1             # CLI framework
+tqdm>=4.65             # Progress bars
+Pillow>=10.0           # Image processing
+
+# Testing
+pytest>=7.4
+pytest-asyncio>=0.23
+pytest-cov>=4.1

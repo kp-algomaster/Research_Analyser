@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+.venv312/
+env/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+output/
+tmp/
+*.pdf
+!tests/fixtures/*.pdf
+
+# Model weights
+models/
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# Logs
+*.log
+logs/
