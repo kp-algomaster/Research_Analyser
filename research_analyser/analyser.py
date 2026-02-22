@@ -24,6 +24,7 @@ from research_analyser.models import (
 from research_analyser.ocr_engine import OCREngine
 from research_analyser.report_generator import ReportGenerator
 from research_analyser.reviewer import PaperReviewer
+from research_analyser.tts_engine import TTSEngine
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,11 @@ class ResearchAnalyser:
             openai_api_key=self.config.openai_api_key,
         )
         self.report_generator = ReportGenerator()
+        self.tts_engine = TTSEngine(
+            model_name=self.config.tts.model,
+            device=self.config.tts.device,
+            speaker=self.config.tts.speaker,
+        )
 
     async def analyse(
         self,
@@ -169,6 +175,17 @@ class ResearchAnalyser:
         # 8. Save outputs
         output_dir = Path(self.config.app.output_dir)
         self.report_generator.save_all(report, output_dir)
+
+        # 9. Generate audio narration (if requested)
+        audio_path = None
+        if options.generate_audio:
+            try:
+                logger.info("Generating audio narration with Qwen3-TTS...")
+                audio_path = await self.tts_engine.synthesize(report, output_dir)
+                logger.info(f"Audio saved to: {audio_path}")
+            except Exception as exc:
+                logger.error(f"Audio generation failed: {exc}")
+
         logger.info(f"Analysis complete in {elapsed:.1f}s. Output: {output_dir}")
 
         return report

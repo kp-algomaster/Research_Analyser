@@ -31,7 +31,7 @@ class DiagramGenerator:
 
     def __init__(
         self,
-        provider: str = "google",
+        provider: str = "gemini",
         vlm_model: str = "gemini-2.0-flash",
         image_model: str = "gemini-3-pro-image-preview",
         optimize_inputs: bool = True,
@@ -62,10 +62,10 @@ class DiagramGenerator:
             settings = Settings(
                 vlm_provider=self.provider,
                 vlm_model=self.vlm_model,
-                image_provider=f"{self.provider}_imagen",
+                image_provider="google_imagen",
                 image_model=self.image_model,
-                optimize_inputs=self.optimize_inputs,
-                auto_refine=self.auto_refine,
+                refinement_iterations=self.max_iterations,
+                output_resolution=getattr(self, "resolution", "2k"),
             )
 
             self._pipeline = PaperBananaPipeline(settings=settings)

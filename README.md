@@ -1,6 +1,6 @@
 # Research Analyser
 
-An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for PDF extraction, **PaperBanana** for publication-quality diagram generation, **LangGraph Agentic Reviewer** for peer-review-quality analysis, and **PaperReview.ai** comparison for external review benchmarking.
+An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for PDF extraction, **PaperBanana** for publication-quality diagram generation, **LangGraph Agentic Reviewer** for peer-review-quality analysis, **Qwen3-TTS** for audio narration, and **PaperReview.ai** comparison for external review benchmarking.
 
 ## Features
 
@@ -10,6 +10,7 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 - **Agentic Paper Review** — LangGraph 9-node workflow with ML-calibrated scoring (Soundness, Presentation, Contribution)
 - **PaperReview.ai Comparison** — Upload external review JSON from [PaperReview.ai](https://paperreview.ai) to compare scores against local review
 - **Configurable API Keys** — Sidebar settings for Google (PaperBanana), OpenAI (Reviewer), and Tavily (Related Work Search) keys
+- **Audio Narration** — Qwen3-TTS reads your analysis report aloud as a downloadable WAV file
 - **Structured Reports** — Markdown + HTML reports with key findings, equations, strengths/weaknesses, and visual summaries
 - **macOS DMG App** — Standalone desktop app bundled with PyInstaller
 
@@ -30,6 +31,9 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 ├──────────┼──────────────┼───────────────┼───────────────┤
 │ arXiv    │ Table/Figure │ PaperReview   │ Diagrams      │
 │ Resolver │ Detection    │ Comparison    │ (PNG/SVG)     │
+├──────────┼──────────────┼───────────────┼───────────────┤
+│          │              │ Qwen3-TTS     │ Audio         │
+│          │              │ Narration     │ (WAV)         │
 └──────────┴──────────────┴───────────────┴───────────────┘
 ```
 
@@ -100,6 +104,10 @@ python -m research_analyser analyse paper.pdf --diagrams --no-review -d methodol
 
 # Review only (no diagrams)
 python -m research_analyser analyse paper.pdf --no-diagrams --review
+
+# With audio narration (Qwen3-TTS)
+python -m research_analyser analyse paper.pdf --audio
+python -m research_analyser analyse paper.pdf --no-diagrams --no-review --audio
 ```
 
 ### Web UI
@@ -107,6 +115,7 @@ python -m research_analyser analyse paper.pdf --no-diagrams --review
 The Streamlit UI provides:
 - **Sidebar** — Configure API keys (Google, OpenAI, Tavily), diagram types, provider, and venue
 - **Analysis** — Upload PDF or enter arXiv URL, click "Analyse Paper"
+- **Audio Narration** — Enable "Generate Audio Narration (Qwen3-TTS)" checkbox to produce an in-browser audio player and downloadable WAV
 - **PaperReview.ai Comparison** — Upload a review JSON from paperreview.ai to compare scores
 
 ### Python API
@@ -122,6 +131,11 @@ report = asyncio.run(analyser.analyse("https://arxiv.org/abs/2602.17002", option
 
 print(report.summary.one_sentence)
 print(f"Review score: {report.review.overall_score:.1f}/10")
+
+# Generate with audio narration
+options = AnalysisOptions(generate_audio=True)
+report = asyncio.run(analyser.analyse("paper.pdf", options=options))
+# Audio saved to output/analysis_audio.wav
 ```
 
 ### PaperReview.ai Comparison
@@ -154,6 +168,7 @@ output/
 │   ├── methodology.png          # Methodology overview diagram
 │   ├── architecture.png         # Architecture diagram
 │   └── results_plot.png         # Results visualization
+├── analysis_audio.wav           # Audio narration (Qwen3-TTS)
 ├── extracted/
 │   ├── full_text.md             # Complete extracted text
 │   ├── equations.json           # All equations in LaTeX
@@ -174,6 +189,7 @@ See [docs/configuration.md](docs/configuration.md) for full configuration option
 | PaperBanana | [llmsresearch/paperbanana](https://github.com/llmsresearch/paperbanana) | AI diagram generation |
 | PaperBanana (Official) | [dwzhu-pku/PaperBanana](https://github.com/dwzhu-pku/PaperBanana) | Original research implementation |
 | Agentic Paper Review | [debashis1983/agentic-paper-review](https://github.com/debashis1983/agentic-paper-review) | Open-source paper reviewer |
+| Qwen3-TTS | [QwenLM/Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | Text-to-speech audio narration |
 | PaperReview.ai | [paperreview.ai](https://paperreview.ai/) | Stanford Agentic Reviewer (web) |
 
 ## License

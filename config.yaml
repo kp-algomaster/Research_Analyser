@@ -11,7 +11,7 @@ ocr:
   output_format: "markdown"
 
 diagrams:
-  provider: "google"              # "openai", "google", "openrouter"
+  provider: "gemini"              # "gemini", "openrouter"
   vlm_model: "gemini-2.0-flash"
   image_model: "gemini-3-pro-image-preview"
   optimize_inputs: true
@@ -29,6 +29,12 @@ review:
     presentation: 0.4242
     contribution: 1.0588
   intercept: -0.3057
+
+tts:
+  enabled: false
+  model: "Qwen/Qwen3-TTS"
+  device: "auto"
+  speaker: "default"
 
 api:
   host: "0.0.0.0"

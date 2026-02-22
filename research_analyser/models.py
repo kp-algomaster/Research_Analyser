@@ -32,6 +32,7 @@ class AnalysisOptions:
     extract_figures: bool = True
     generate_diagrams: bool = True
     generate_review: bool = True
+    generate_audio: bool = False
     generate_summary: bool = True
     diagram_types: list[str] = field(
         default_factory=lambda: ["methodology", "architecture"]

@@ -35,6 +35,7 @@ class AnalyseRequest(BaseModel):
     venue: Optional[str] = None
     generate_diagrams: bool = True
     generate_review: bool = True
+    generate_audio: bool = False
     diagram_types: list[str] = ["methodology"]
 
 
@@ -63,6 +64,7 @@ async def analyse_paper(
     venue: Optional[str] = Form(None),
     generate_diagrams: bool = Form(True),
     generate_review: bool = Form(True),
+    generate_audio: bool = Form(False),
 ):
     """Submit a paper for analysis. Upload a PDF file or provide a URL/arXiv ID."""
     job_id = str(uuid.uuid4())
@@ -85,6 +87,7 @@ async def analyse_paper(
     options = AnalysisOptions(
         generate_diagrams=generate_diagrams,
         generate_review=generate_review,
+        generate_audio=generate_audio,
     )
 
     # Run analysis in background

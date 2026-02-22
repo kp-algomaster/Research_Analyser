@@ -61,6 +61,7 @@ st.sidebar.divider()
 st.sidebar.subheader("Analysis Options")
 generate_diagrams = st.sidebar.checkbox("Generate Diagrams", value=True)
 generate_review = st.sidebar.checkbox("Generate Peer Review", value=True)
+generate_audio = st.sidebar.checkbox("Generate Audio Narration (Qwen3-TTS)", value=False)
 diagram_types = st.sidebar.multiselect(
     "Diagram Types",
     ["methodology", "architecture", "results"],
@@ -68,7 +69,7 @@ diagram_types = st.sidebar.multiselect(
 )
 diagram_provider = st.sidebar.selectbox(
     "Diagram Provider",
-    ["google", "openai", "openrouter"],
+    ["gemini", "openrouter"],
     index=0,
     help="PaperBanana VLM provider for diagram generation",
 )
@@ -123,6 +124,7 @@ if st.button("Analyse Paper", type="primary", use_container_width=True):
         options = AnalysisOptions(
             generate_diagrams=generate_diagrams,
             generate_review=generate_review,
+            generate_audio=generate_audio,
             diagram_types=diagram_types,
         )
 
@@ -221,6 +223,20 @@ if st.button("Analyse Paper", type="primary", use_container_width=True):
                         st.write("**Weaknesses:**")
                         for w in report.review.weaknesses:
                             st.write(f"- {w}")
+
+                # Audio Narration
+                if generate_audio:
+                    audio_file = Path(output_dir) / "analysis_audio.wav"
+                    if audio_file.exists():
+                        st.subheader("Audio Narration (Qwen3-TTS)")
+                        st.audio(str(audio_file), format="audio/wav")
+                        with open(audio_file, "rb") as af:
+                            st.download_button(
+                                "Download Audio Narration (WAV)",
+                                af.read(),
+                                file_name="analysis_audio.wav",
+                                mime="audio/wav",
+                            )
 
                 # Download outputs
                 st.subheader("Download Reports")

@@ -1,7 +1,7 @@
 # Research Analyser - Project Guide
 
 ## Project Overview
-AI-powered research paper analysis tool combining MonkeyOCR 1.5, PaperBanana, and Stanford Agentic Reviewer.
+AI-powered research paper analysis tool combining MonkeyOCR 1.5, PaperBanana, Stanford Agentic Reviewer, and Qwen3-TTS.
 
 ## Key Files
 - `research_analyser/analyser.py` - Main orchestrator
@@ -9,6 +9,7 @@ AI-powered research paper analysis tool combining MonkeyOCR 1.5, PaperBanana, an
 - `research_analyser/ocr_engine.py` - MonkeyOCR integration
 - `research_analyser/diagram_generator.py` - PaperBanana integration
 - `research_analyser/reviewer.py` - Agentic review (LangGraph)
+- `research_analyser/tts_engine.py` - Qwen3-TTS audio narration
 - `research_analyser/report_generator.py` - Output assembly
 - `SPEC.md` - Full specification document
 - `docs/key_points_and_equations.md` - Formulae reference
@@ -27,3 +28,4 @@ Where S=Soundness, P=Presentation, C=Contribution (each 1-4 scale)
 - MonkeyOCR: github.com/Yuliang-Liu/MonkeyOCR
 - PaperBanana: github.com/llmsresearch/paperbanana
 - Agentic Review: github.com/debashis1983/agentic-paper-review
+- Qwen3-TTS: huggingface.co/Qwen/Qwen3-TTS

@@ -39,6 +39,7 @@ rich>=13.0             # CLI output formatting
 click>=8.1             # CLI framework
 tqdm>=4.65             # Progress bars
 Pillow>=10.0           # Image processing
+soundfile>=0.12        # Audio I/O for TTS output
 
 # Testing
 pytest>=7.4

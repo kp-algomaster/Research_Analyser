@@ -54,8 +54,9 @@ def cli(ctx, config, verbose):
     default=["methodology"],
     help="Diagram types to generate",
 )
+@click.option("--audio/--no-audio", default=False, help="Generate audio narration (Qwen3-TTS)")
 @click.pass_context
-def analyse(ctx, source, output, diagrams, review, venue, diagram_type):
+def analyse(ctx, source, output, diagrams, review, venue, diagram_type, audio):
     """Analyse a research paper (PDF file, URL, arXiv ID, or DOI)."""
     config = ctx.obj["config"]
     if output:
@@ -64,6 +65,7 @@ def analyse(ctx, source, output, diagrams, review, venue, diagram_type):
     options = AnalysisOptions(
         generate_diagrams=diagrams,
         generate_review=review,
+        generate_audio=audio,
         diagram_types=list(diagram_type),
     )
 
@@ -96,6 +98,11 @@ def analyse(ctx, source, output, diagrams, review, venue, diagram_type):
         score = report.review.overall_score
         decision = interpret_score(score)
         console.print(f"\n[bold]Review Score: {score:.1f}/10 ({decision})[/bold]")
+
+    if audio:
+        audio_file = Path(config.app.output_dir) / "analysis_audio.wav"
+        if audio_file.exists():
+            console.print(f"\n[bold]Audio narration:[/bold] {audio_file}")
 
     console.print(f"\nOutput saved to: [blue]{config.app.output_dir}[/blue]")
 

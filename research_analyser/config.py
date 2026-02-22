@@ -19,7 +19,7 @@ class OCRConfig(BaseModel):
 
 
 class DiagramConfig(BaseModel):
-    provider: str = "google"
+    provider: str = "gemini"
     vlm_model: str = "gemini-2.0-flash"
     image_model: str = "gemini-3-pro-image-preview"
     optimize_inputs: bool = True
@@ -27,6 +27,13 @@ class DiagramConfig(BaseModel):
     max_iterations: int = 3
     output_format: str = "png"
     resolution: str = "2k"
+
+
+class TTSConfig(BaseModel):
+    enabled: bool = False
+    model: str = "Qwen/Qwen3-TTS"
+    device: str = "auto"
+    speaker: str = "default"
 
 
 class ReviewScoringWeights(BaseModel):
@@ -64,6 +71,7 @@ class Config(BaseSettings):
     ocr: OCRConfig = Field(default_factory=OCRConfig)
     diagrams: DiagramConfig = Field(default_factory=DiagramConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
+    tts: TTSConfig = Field(default_factory=TTSConfig)
     api: APIConfig = Field(default_factory=APIConfig)
 
     # API Keys (from environment)
