@@ -30,6 +30,16 @@ review:
     contribution: 1.0588
   intercept: -0.3057
 
+storm:
+  enabled: false             # Set to true to generate a STORM Wikipedia-style report
+  conv_model: "gpt-4o-mini"  # Model for conversation simulation (cheaper)
+  outline_model: "gpt-4o"    # Model for outline generation
+  article_model: "gpt-4o"    # Model for article writing and polishing
+  max_conv_turn: 3           # Max conversation turns per perspective
+  max_perspective: 3         # Number of expert perspectives to simulate
+  search_top_k: 5            # Chunks fetched per search query
+  retrieve_top_k: 5          # Chunks used per retrieval
+
 tts:
   enabled: false
   model: "Qwen/Qwen3-TTS"

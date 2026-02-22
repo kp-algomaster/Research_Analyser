@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from html import escape
-from datetime import datetime
 from pathlib import Path
 
-from research_analyser.models import AnalysisReport, Equation, KeyPoint
+from research_analyser.models import AnalysisReport
 from research_analyser.reviewer import interpret_score
 
 logger = logging.getLogger(__name__)
@@ -229,8 +228,8 @@ class ReportGenerator:
 
         lines.append("---")
         lines.append(f'title: "{report.extracted_content.title}"')
-        lines.append(f'format: "spec-driven"')
-        lines.append(f'version: "1.0"')
+        lines.append('format: "spec-driven"')
+        lines.append('version: "1.0"')
         lines.append("---\n")
 
         lines.append(f"# Spec Output: {report.extracted_content.title}\n")
@@ -475,6 +474,12 @@ class ReportGenerator:
         (extracted_dir / "tables.json").write_text(
             json.dumps(tables_data, indent=2), encoding="utf-8"
         )
+
+        # STORM report (if generated)
+        if report.storm_report:
+            storm_path = output_dir / "storm_report.md"
+            storm_path.write_text(report.storm_report, encoding="utf-8")
+            logger.info(f"Saved STORM report to {storm_path}")
 
         # Metadata
         metadata = {

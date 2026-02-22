@@ -50,6 +50,17 @@ class ReviewConfig(BaseModel):
     intercept: float = -0.3057
 
 
+class StormConfig(BaseModel):
+    enabled: bool = False
+    conv_model: str = "gpt-4o-mini"
+    outline_model: str = "gpt-4o"
+    article_model: str = "gpt-4o"
+    max_conv_turn: int = Field(default=3, ge=1)
+    max_perspective: int = Field(default=3, ge=1)
+    search_top_k: int = Field(default=5, ge=1)
+    retrieve_top_k: int = Field(default=5, ge=1)
+
+
 class APIConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
@@ -71,6 +82,7 @@ class Config(BaseSettings):
     ocr: OCRConfig = Field(default_factory=OCRConfig)
     diagrams: DiagramConfig = Field(default_factory=DiagramConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
+    storm: StormConfig = Field(default_factory=StormConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     api: APIConfig = Field(default_factory=APIConfig)
 

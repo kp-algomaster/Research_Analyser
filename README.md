@@ -8,6 +8,7 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 - **Intelligent OCR Extraction** — MonkeyOCR 1.5 extracts text, equations (LaTeX), tables, and figures with state-of-the-art accuracy
 - **AI Diagram Generation** — PaperBanana generates methodology diagrams, architecture overviews, and results plots using Gemini VLM + Imagen
 - **Agentic Paper Review** — LangGraph 9-node workflow with ML-calibrated scoring (Soundness, Presentation, Contribution)
+- **STORM Wikipedia Report** — Stanford OVAL's knowledge-storm generates a cited Wikipedia-style article about the paper's topic, grounded in the paper's own extracted content
 - **PaperReview.ai Comparison** — Upload external review JSON from [PaperReview.ai](https://paperreview.ai) to compare scores against local review
 - **Configurable API Keys** — Sidebar settings for Google (PaperBanana), OpenAI (Reviewer), and Tavily (Related Work Search) keys
 - **Audio Narration** — Qwen3-TTS reads your analysis report aloud as a downloadable WAV file
@@ -108,6 +109,9 @@ python -m research_analyser analyse paper.pdf --no-diagrams --review
 # With audio narration (Qwen3-TTS)
 python -m research_analyser analyse paper.pdf --audio
 python -m research_analyser analyse paper.pdf --no-diagrams --no-review --audio
+
+# With STORM Wikipedia-style report (requires: pip install knowledge-storm, storm.enabled: true in config.yaml)
+python -m research_analyser analyse paper.pdf --storm
 ```
 
 ### Web UI
@@ -131,6 +135,12 @@ report = asyncio.run(analyser.analyse("https://arxiv.org/abs/2602.17002", option
 
 print(report.summary.one_sentence)
 print(f"Review score: {report.review.overall_score:.1f}/10")
+
+# Generate with STORM Wikipedia-style report (set storm.enabled: true in config.yaml first)
+options = AnalysisOptions(generate_storm_report=True)
+report = asyncio.run(analyser.analyse("paper.pdf", options=options))
+print(report.storm_report)  # Full Wikipedia-style article
+# Also saved to output/storm_report.md
 
 # Generate with audio narration
 options = AnalysisOptions(generate_audio=True)
@@ -163,17 +173,19 @@ Where $S$ = Soundness, $P$ = Presentation, $C$ = Contribution (each on 1–4 sca
 output/
 ├── report.md                    # Full analysis report
 ├── key_points.md                # Extracted key points & equations
+├── spec_output.md               # Machine-readable spec-driven output
+├── report.html                  # HTML report with MathJax equations
 ├── review.md                    # Peer review analysis
+├── storm_report.md              # STORM Wikipedia-style article (optional)
 ├── diagrams/
 │   ├── methodology.png          # Methodology overview diagram
 │   ├── architecture.png         # Architecture diagram
 │   └── results_plot.png         # Results visualization
-├── analysis_audio.wav           # Audio narration (Qwen3-TTS)
+├── analysis_audio.wav           # Audio narration (Qwen3-TTS, optional)
 ├── extracted/
 │   ├── full_text.md             # Complete extracted text
 │   ├── equations.json           # All equations in LaTeX
-│   ├── tables.json              # Extracted tables
-│   └── figures/                 # Extracted figures
+│   └── tables.json              # Extracted tables
 └── metadata.json                # Paper metadata & analysis config
 ```
 

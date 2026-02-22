@@ -34,6 +34,7 @@ class AnalysisOptions:
     generate_review: bool = True
     generate_audio: bool = False
     generate_summary: bool = True
+    generate_storm_report: bool = False
     diagram_types: list[str] = field(
         default_factory=lambda: ["methodology", "architecture"]
     )
@@ -231,6 +232,7 @@ class AnalysisReport:
     summary: PaperSummary
     key_points: list[KeyPoint]
     metadata: ReportMetadata
+    storm_report: Optional[str] = None
 
     def to_markdown(self) -> str:
         """Generate full markdown report."""

@@ -10,7 +10,6 @@ from typing import Optional
 
 from research_analyser.config import Config
 from research_analyser.diagram_generator import DiagramGenerator
-from research_analyser.exceptions import ResearchAnalyserError
 from research_analyser.input_handler import InputHandler
 from research_analyser.models import (
     AnalysisOptions,
@@ -24,6 +23,7 @@ from research_analyser.models import (
 from research_analyser.ocr_engine import OCREngine
 from research_analyser.report_generator import ReportGenerator
 from research_analyser.reviewer import PaperReviewer
+from research_analyser.storm_reporter import STORMReporter
 from research_analyser.tts_engine import TTSEngine
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,16 @@ class ResearchAnalyser:
             openai_api_key=self.config.openai_api_key,
         )
         self.report_generator = ReportGenerator()
+        self.storm_reporter = STORMReporter(
+            openai_api_key=self.config.openai_api_key,
+            conv_model=self.config.storm.conv_model,
+            outline_model=self.config.storm.outline_model,
+            article_model=self.config.storm.article_model,
+            max_conv_turn=self.config.storm.max_conv_turn,
+            max_perspective=self.config.storm.max_perspective,
+            search_top_k=self.config.storm.search_top_k,
+            retrieve_top_k=self.config.storm.retrieve_top_k,
+        )
         self.tts_engine = TTSEngine(
             model_name=self.config.tts.model,
             device=self.config.tts.device,
@@ -176,7 +186,23 @@ class ResearchAnalyser:
         output_dir = Path(self.config.app.output_dir)
         self.report_generator.save_all(report, output_dir)
 
-        # 9. Generate audio narration (if requested)
+        # 9. Generate STORM Wikipedia-style report (if requested)
+        if options.generate_storm_report and self.config.storm.enabled:
+            try:
+                logger.info("Generating STORM report...")
+                # STORMWikiRunner.run() makes blocking DSPy/litellm calls;
+                # run in a thread to keep the event loop free (Principle II).
+                report.storm_report = await asyncio.to_thread(
+                    self.storm_reporter.generate, report
+                )
+                if report.storm_report:
+                    storm_path = output_dir / "storm_report.md"
+                    storm_path.write_text(report.storm_report, encoding="utf-8")
+                    logger.info(f"STORM report saved to {storm_path}")
+            except Exception as exc:
+                logger.error(f"STORM report generation failed: {exc}")
+
+        # 10. Generate audio narration (if requested)
         audio_path = None
         if options.generate_audio:
             try:

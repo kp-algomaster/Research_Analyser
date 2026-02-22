@@ -59,7 +59,9 @@ class AnalysisOptions:
     extract_figures: bool = True
     generate_diagrams: bool = True
     generate_review: bool = True
+    generate_audio: bool = False
     generate_summary: bool = True
+    generate_storm_report: bool = False    # STORM Wikipedia-style report (requires knowledge-storm)
     diagram_types: list[str] = field(default_factory=lambda: ["methodology", "architecture"])
     diagram_provider: Literal["openai", "google", "openrouter"] = "google"
     review_dimensions: list[str] = field(default_factory=lambda: [
@@ -115,6 +117,7 @@ class AnalysisReport:
     summary: PaperSummary
     key_points: list[KeyPoint]
     metadata: ReportMetadata
+    storm_report: Optional[str] = None    # STORM Wikipedia-style article (None if not generated)
 
     def to_markdown(self) -> str: ...
     def to_json(self) -> dict: ...
@@ -373,7 +376,52 @@ class ReportGenerator:
         """
 
     def save_all(self, report: AnalysisReport, output_dir: Path) -> None:
-        """Save all outputs to directory structure."""
+        """Save all outputs to directory structure.
+
+        Output files:
+        - report.md            Full markdown analysis report
+        - key_points.md        Key findings and equations summary
+        - spec_output.md       Machine-readable spec-driven output
+        - report.html          HTML report with MathJax equations
+        - review.md            Raw peer review (if generated)
+        - storm_report.md      STORM Wikipedia-style article (if generated)
+        - extracted/           full_text.md, equations.json, tables.json
+        - metadata.json        Pipeline run metadata
+        """
+```
+
+### 3.7 STORM Reporter (`research_analyser/storm_reporter.py`)
+
+**Purpose:** Generate Wikipedia-style cited articles from paper content using Stanford OVAL's
+`knowledge-storm` library. Requires `pip install knowledge-storm`.
+
+**Interface:**
+```python
+class STORMReporter:
+    def __init__(
+        self,
+        openai_api_key: Optional[str] = None,
+        conv_model: str = "gpt-4o-mini",
+        outline_model: str = "gpt-4o",
+        article_model: str = "gpt-4o",
+        max_conv_turn: int = 3,
+        max_perspective: int = 3,
+        search_top_k: int = 5,
+        retrieve_top_k: int = 5,
+    ): ...
+
+    def generate(self, report: AnalysisReport) -> str:
+        """Run STORM pipeline. Returns polished article text.
+        Blocking — call via asyncio.to_thread in async contexts.
+        Raises: ImportError if knowledge-storm not installed.
+        """
+
+class PaperContentRM(dspy.Retrieve):
+    """Custom retrieval module backed by the paper's extracted content.
+    No external API or vector database required.
+    """
+    def __init__(self, content: ExtractedContent, k: int = 5): ...
+    def forward(self, query_or_queries, exclude_urls=None) -> list[dspy.Example]: ...
 ```
 
 ### 3.6 Main Orchestrator (`research_analyser/analyser.py`)
@@ -494,6 +542,16 @@ review:
     presentation: 0.4242
     contribution: 1.0588
   intercept: -0.3057
+
+storm:
+  enabled: false                     # Set true to generate STORM Wikipedia-style report
+  conv_model: "gpt-4o-mini"          # Model for conversation simulation
+  outline_model: "gpt-4o"            # Model for outline generation
+  article_model: "gpt-4o"            # Model for article writing and polishing
+  max_conv_turn: 3                   # Max conversation turns per perspective (min 1)
+  max_perspective: 3                 # Number of expert perspectives (min 1)
+  search_top_k: 5                    # Chunks fetched per search query (min 1)
+  retrieve_top_k: 5                  # Chunks used per retrieval step (min 1)
 
 api:
   host: "0.0.0.0"

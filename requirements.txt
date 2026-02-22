@@ -18,6 +18,9 @@ PyMuPDF>=1.23
 # Install separately: pip install paperbanana
 # Or: pip install paperbanana[google] for Gemini free tier
 
+# STORM Wikipedia-style report generation
+knowledge-storm>=1.0.0
+
 # Agentic Paper Review
 langgraph>=0.2
 langchain>=0.2
