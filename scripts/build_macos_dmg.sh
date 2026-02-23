@@ -129,13 +129,9 @@ W, H = 540, 320
 try:
     from PIL import Image, ImageDraw, ImageFont
 
-    # ── Canvas: dark vertical gradient ───────────────────────────────────────
-    img = Image.new('RGB', (W, H))
+    # ── Canvas: white background ──────────────────────────────────────────────
+    img = Image.new('RGB', (W, H), (255, 255, 255))
     d = ImageDraw.Draw(img)
-    for y in range(H):
-        t = y / H
-        d.line([(0, y), (W, y)],
-               fill=(int(10 + t*8), int(13 + t*6), int(19 + t*11)))
 
     # ── Well geometry ─────────────────────────────────────────────────────────
     # Finder set position uses CENTRE of the icon IMAGE (confirmed from
@@ -147,16 +143,16 @@ try:
     RX1, RY1, RX2, RY2 = 335, 70, 475, 250 # right well (140 × 180 pt)
     MID_Y = 140                              # == icon centre y
 
-    # Fake drop-shadow: darker rect offset by 2 px
-    SHADOW = (6, 8, 12)
+    # Fake drop-shadow: light gray offset by 2 px
+    SHADOW = (210, 213, 218)
     for bx1, by1, bx2, by2 in [(LX1, LY1, LX2, LY2), (RX1, RY1, RX2, RY2)]:
         d.rounded_rectangle([bx1+2, by1+3, bx2+2, by2+3],
                             radius=R, fill=SHADOW)
 
     # Well backgrounds
-    FILL    = (20, 25, 33)
-    BORDER  = (33, 40, 52)
-    HILITE  = (38, 46, 60)   # top-edge inner highlight
+    FILL    = (246, 247, 249)
+    BORDER  = (200, 205, 215)
+    HILITE  = (255, 255, 255)   # top-edge inner highlight
     for bx1, by1, bx2, by2 in [(LX1, LY1, LX2, LY2), (RX1, RY1, RX2, RY2)]:
         d.rounded_rectangle([bx1, by1, bx2, by2],
                             radius=R, fill=FILL, outline=BORDER, width=1)
@@ -179,9 +175,9 @@ try:
         f1 = f2 = None
     kw = lambda f: {'font': f} if f else {}
     d.text((W//2, 270), 'Drag to Applications to install',
-           fill=(155, 165, 178), anchor='mm', **kw(f1))
+           fill=(60, 65, 75), anchor='mm', **kw(f1))
     d.text((W//2, 287), 'Then open from your Applications folder',
-           fill=(65, 75, 92), anchor='mm', **kw(f2))
+           fill=(130, 138, 150), anchor='mm', **kw(f2))
 
     img.save(bg)
     print('  Background: OK')
@@ -193,7 +189,7 @@ except Exception as _e:
         for y in range(H):
             rows += b'\x00'
             for x in range(W):
-                rows += bytes([13, 17, 23])
+                rows += bytes([255, 255, 255])
         compressed = zlib.compress(bytes(rows), 9)
         def chunk(t, d):
             crc = zlib.crc32(t+d) & 0xFFFFFFFF
