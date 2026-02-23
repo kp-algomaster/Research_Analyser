@@ -1148,9 +1148,14 @@ if run_clicked:
                 if _parallel_tasks:
                     _prog.progress(50, text=f"🤖  Generating {' & '.join(_parallel_labels)}…")
                     _status.write(f"🤖  Generating {' & '.join(_parallel_labels)}…")
-                    _par_results = asyncio.run(
-                        asyncio.gather(*_parallel_tasks, return_exceptions=True)
-                    )
+
+                    # asyncio.gather() must be called *inside* a running loop.
+                    # Evaluating it as an argument to asyncio.run() causes uvloop
+                    # to raise "no current event loop" before run() starts.
+                    async def _run_parallel(_tasks=_parallel_tasks):
+                        return await asyncio.gather(*_tasks, return_exceptions=True)
+
+                    _par_results = asyncio.run(_run_parallel())
                     for _r in _par_results:
                         if isinstance(_r, Exception):
                             logging.getLogger(__name__).error("Parallel task failed: %s", _r)
