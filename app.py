@@ -1042,20 +1042,200 @@ if run_clicked:
                     st.error("PDF path not found or not a PDF file.")
                     st.stop()
 
+        # ── Progress bar + partial-results slot ───────────────────────────────────
+        _prog = st.progress(0, text="Starting analysis…")
+        _partial_slot = st.empty()   # populated after OCR; cleared when full report ready
+
         with st.status("Analysing paper…", expanded=True) as _status:
             try:
-                def _on_progress(msg: str) -> None:
-                    _status.write(msg)
-
-                report = asyncio.run(
-                    analyser.analyse(source, options=options, on_progress=_on_progress)
+                # Deferred model imports (avoid heavy import at module load)
+                from research_analyser.models import (  # noqa: PLC0415
+                    AnalysisReport,
+                    PaperInput,
+                    PaperSummary,
+                    ReportMetadata,
                 )
+                import time as _time  # noqa: PLC0415
+
+                _t0 = _time.time()
+
+                # ── Stage 1 : Resolve PDF (0 → 10 %) ──────────────────────────
+                _prog.progress(5, text="⬇️  Fetching PDF…")
+                _status.write("⬇️  Fetching PDF…")
+                detected_type = analyser.input_handler.detect_source_type(source)
+                paper_input = PaperInput(
+                    source_type=detected_type,
+                    source_value=source,
+                    analysis_options=options,
+                )
+                pdf_path = asyncio.run(analyser.input_handler.resolve(paper_input))
+                _prog.progress(10, text=f"✓  PDF ready — {pdf_path.name}")
+                _status.write(f"✓  PDF ready — {pdf_path.name}")
+
+                # ── Stage 2 : OCR extraction (10 → 40 %) ──────────────────────
+                _prog.progress(15, text="🔍  Extracting content (OCR)…")
+                _status.write("🔍  Extracting content (OCR)…")
+                content = asyncio.run(analyser.ocr_engine.extract(pdf_path))
+                _prog.progress(40, text=(
+                    f"✓  {len(content.sections)} sections · "
+                    f"{len(content.equations)} equations · "
+                    f"{len(content.figures)} figures"
+                ))
+                _status.write(
+                    f"✓  Extracted {len(content.sections)} sections · "
+                    f"{len(content.equations)} equations · "
+                    f"{len(content.figures)} figures"
+                )
+
+                # ── Partial results after OCR ──────────────────────────────────
+                _authors_str = ", ".join(content.authors[:4]) if content.authors else ""
+                if len(content.authors) > 4:
+                    _authors_str += f" +{len(content.authors) - 4} more"
+
+                with _partial_slot.container():
+                    st.markdown(
+                        '<p class="sec-label">Results <span style="color:#8b949e;'
+                        'font-size:11px;font-weight:400">(partial — analysis in progress)</span></p>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        f'<div class="paper-card">'
+                        f'  <p class="paper-title">{content.title}</p>'
+                        f'  <p class="paper-meta">{_authors_str}</p>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    _cm1, _cm2, _cm3, _cm4 = st.columns(4)
+                    _cm1.metric("Equations",  len(content.equations))
+                    _cm2.metric("Tables",     len(content.tables))
+                    _cm3.metric("Figures",    len(content.figures))
+                    _cm4.metric("References", len(content.references))
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    _cp1, _cp2, _cp3 = st.columns(3, gap="medium")
+                    with _cp1:
+                        with st.expander("📖 Abstract", expanded=True):
+                            st.write(content.abstract[:600] if content.abstract else "—")
+                    with _cp2:
+                        with st.expander("🎨 Diagrams", expanded=True):
+                            if generate_diagrams:
+                                st.info("⏳  Generating diagrams…")
+                            else:
+                                st.caption("Not requested")
+                    with _cp3:
+                        with st.expander("🧐 Peer Review", expanded=True):
+                            if generate_review:
+                                st.info("⏳  Peer review in progress…")
+                            else:
+                                st.caption("Not requested")
+
+                # ── Stage 3 : Parallel tasks — diagrams + peer review (40 → 80 %) ──
+                _parallel_tasks = []
+                _parallel_labels = []
+                if options.generate_diagrams:
+                    _parallel_tasks.append(
+                        analyser.diagram_generator.generate(content, options.diagram_types)
+                    )
+                    _parallel_labels.append("diagrams")
+                if options.generate_review:
+                    _parallel_tasks.append(
+                        analyser.reviewer.review(content, paper_input.target_venue)
+                    )
+                    _parallel_labels.append("peer review")
+
+                diagrams: list = []
+                review = None
+
+                if _parallel_tasks:
+                    _prog.progress(50, text=f"🤖  Generating {' & '.join(_parallel_labels)}…")
+                    _status.write(f"🤖  Generating {' & '.join(_parallel_labels)}…")
+                    _par_results = asyncio.run(
+                        asyncio.gather(*_parallel_tasks, return_exceptions=True)
+                    )
+                    for _r in _par_results:
+                        if isinstance(_r, Exception):
+                            logging.getLogger(__name__).error("Parallel task failed: %s", _r)
+                        elif isinstance(_r, list):
+                            diagrams = _r
+                        else:
+                            review = _r
+
+                    if diagrams:
+                        _status.write(f"✓  {len(diagrams)} diagram(s) ready")
+                    if review:
+                        _status.write(f"✓  Peer review — {review.overall_score:.1f} / 10")
+
+                # ── Stage 4 : Assemble report (80 → 88 %) ────────────────────
+                _prog.progress(80, text="📋  Assembling report…")
+                _status.write("📋  Assembling report…")
+
+                summary = PaperSummary(
+                    one_sentence=f"Analysis of '{content.title}'",
+                    abstract_summary=content.abstract[:500] if content.abstract else "",
+                    methodology_summary=analyser._extract_methodology_summary(content),
+                    results_summary=analyser._extract_results_summary(content),
+                    conclusions=analyser._extract_conclusions(content),
+                )
+                key_points = analyser._extract_key_points(content, review)
+                metadata = ReportMetadata(
+                    ocr_model=config.ocr.model,
+                    diagram_provider=config.diagrams.provider,
+                    review_model=config.review.model,
+                    processing_time_seconds=_time.time() - _t0,
+                )
+                report = AnalysisReport(
+                    paper_input=paper_input,
+                    extracted_content=content,
+                    review=review,
+                    diagrams=diagrams,
+                    summary=summary,
+                    key_points=key_points,
+                    metadata=metadata,
+                )
+
+                _prog.progress(85, text="💾  Saving outputs…")
+                _status.write("💾  Saving outputs…")
+                _out_path = Path(output_dir)
+                analyser.report_generator.save_all(report, _out_path)
+
+                # ── Stage 5 : STORM report (85 → 93 %) ───────────────────────
+                if options.generate_storm_report and config.storm.enabled:
+                    _prog.progress(87, text="🌪️  Generating STORM report…")
+                    _status.write("🌪️  Generating STORM report…")
+                    try:
+                        report.storm_report = asyncio.run(
+                            asyncio.to_thread(analyser.storm_reporter.generate, report)
+                        )
+                        if report.storm_report:
+                            (_out_path / "storm_report.md").write_text(
+                                report.storm_report, encoding="utf-8"
+                            )
+                        _status.write("✓  STORM report ready")
+                    except Exception as _exc:
+                        _status.write(f"⚠️  STORM failed: {_exc}")
+                    _prog.progress(93, text="🌪️  STORM report complete")
+
+                # ── Stage 6 : Audio narration (93 → 99 %) ────────────────────
+                if options.generate_audio:
+                    _prog.progress(94, text="🎙️  Generating audio narration…")
+                    _status.write("🎙️  Generating audio narration (TTS)…")
+                    try:
+                        asyncio.run(analyser.tts_engine.synthesize(report, _out_path))
+                        _status.write("✓  Audio narration ready")
+                    except Exception as _exc:
+                        _status.write(f"⚠️  Audio generation failed: {_exc}")
+
+                # ── Done ──────────────────────────────────────────────────────
+                _prog.progress(100, text="✓  Analysis complete!")
+                _partial_slot.empty()   # clear partial preview; full results render below
+
                 st.session_state["last_report"] = report
                 st.session_state["last_output_dir"] = output_dir
                 st.session_state["last_generate_audio"] = generate_audio
                 st.session_state["last_generate_storm"] = generate_storm
                 _status.update(label="✓  Analysis complete!", state="complete", expanded=False)
+
             except Exception as e:
+                _prog.progress(100, text="Analysis failed")
                 _status.update(label="Analysis failed", state="error")
                 st.error(f"Analysis failed: {e}")
                 st.exception(e)
