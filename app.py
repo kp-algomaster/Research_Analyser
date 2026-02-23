@@ -44,49 +44,50 @@ st.markdown("""
     font-size: 15px !important; font-weight: 700 !important; margin: 0 !important;
 }
 
-/* Nav radio → pill list */
-[data-testid="stSidebar"] .stRadio > label { display: none; }
-[data-testid="stSidebar"] .stRadio > div { gap: 3px !important; }
-
-/* Pill wrapper */
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label {
-    display: flex !important; align-items: center !important;
-    padding: 9px 14px !important; border-radius: 8px !important;
-    cursor: pointer !important; transition: all 0.15s !important;
-    background: transparent !important;
-}
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover {
-    background: #21262d !important;
-}
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] {
-    background: #1f2d47 !important;
-}
-
-/* Nav text — target the <p> that Streamlit 1.5x renders inside label */
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label p,
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label span,
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label div {
-    color: #e6edf3 !important;
+/* ── Sidebar nav buttons ── */
+/* Use st.sidebar.button() — text lives directly in <button>, no selector guessing */
+[data-testid="stSidebar"] .stButton { margin-bottom: 1px !important; }
+[data-testid="stSidebar"] .stButton > button {
+    text-align: left !important;
+    justify-content: flex-start !important;
+    padding: 10px 16px !important;
+    border-radius: 9px !important;
     font-size: 14px !important;
-    font-weight: 600 !important;
     letter-spacing: 0.01em !important;
+    transition: background 0.15s, color 0.15s !important;
+    width: 100% !important;
+    box-shadow: none !important;
+    transform: none !important;
 }
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover p,
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover span,
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover div {
+/* Inactive nav button */
+[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
+    background: transparent !important;
+    border: none !important;
+    color: #e6edf3 !important;
+    font-weight: 600 !important;
+}
+[data-testid="stSidebar"] .stButton > button[kind="secondary"]:hover {
+    background: #21262d !important;
     color: #ffffff !important;
+    border: none !important;
 }
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] p,
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] span,
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] div {
+/* Active nav button */
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    background: #1f2d47 !important;
+    border: 1px solid #1f3d6e !important;
     color: #58a6ff !important;
     font-weight: 700 !important;
 }
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+    background: #1f2d47 !important;
+    color: #79b8ff !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
 
-/* Sidebar caption / footer text */
+/* Sidebar caption text */
 [data-testid="stSidebar"] .stCaption p,
-[data-testid="stSidebar"] .stCaption,
-[data-testid="stSidebar"] small {
+[data-testid="stSidebar"] .stCaption {
     color: #8b949e !important;
     font-size: 12px !important;
 }
@@ -688,20 +689,33 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-page = st.sidebar.radio(
-    "Navigate",
-    ["📄  Analyse Paper", "⚙️  Configuration", "🖥️  Server Management"],
-    label_visibility="collapsed",
-)
+if "nav_page" not in st.session_state:
+    st.session_state["nav_page"] = "analyse"
+
+_NAV = [
+    ("📄  Analyse Paper",    "analyse"),
+    ("⚙️  Configuration",     "config"),
+    ("🖥️  Server Management", "server"),
+]
+for _label, _key in _NAV:
+    _active = st.session_state["nav_page"] == _key
+    if st.sidebar.button(
+        _label,
+        key=f"nav_{_key}",
+        use_container_width=True,
+        type="primary" if _active else "secondary",
+    ):
+        st.session_state["nav_page"] = _key
+        st.rerun()
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 st.sidebar.caption("Outputs → `~/ResearchAnalyserOutput/`")
 
-if "Server Management" in page:
+_page = st.session_state["nav_page"]
+if _page == "server":
     show_server_management()
     st.stop()
-
-if "Configuration" in page:
+if _page == "config":
     show_configuration()
     st.stop()
 
