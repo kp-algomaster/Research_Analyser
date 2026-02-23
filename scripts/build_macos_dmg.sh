@@ -192,7 +192,9 @@ end tell
 APPLESCRIPT
 
 sync
-hdiutil detach "$MOUNT_DIR"
+# Detach with a retry + force fallback so "Resource busy" doesn't abort the build
+hdiutil detach "$MOUNT_DIR" 2>/dev/null \
+  || { sleep 3; hdiutil detach "$MOUNT_DIR" -force; }
 sleep 2
 
 # ── Convert to compressed read-only DMG ───────────────────────────────────────
