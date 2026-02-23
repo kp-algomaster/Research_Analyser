@@ -1250,15 +1250,36 @@ if _bg is not None:
             st.markdown("<br>", unsafe_allow_html=True)
 
             _bp1, _bp2, _bp3 = st.columns(3, gap="medium")
+            _pc_style = (
+                "background:#161b22;border:1px solid #21262d;border-radius:10px;"
+                "padding:14px 16px;height:100%"
+            )
+            _ph_style = "font-size:13px;font-weight:600;color:#8b949e;margin:0 0 8px 0"
+            _pt_style = "font-size:13px;color:#c9d1d9;line-height:1.6;margin:0"
             with _bp1:
-                with st.expander("📖 Abstract", expanded=True):
-                    st.write(_cnt.abstract[:500] if _cnt.abstract else "—")
+                st.markdown(
+                    f'<div style="{_pc_style}">'
+                    f'<p style="{_ph_style}">📖 Abstract</p>'
+                    f'<p style="{_pt_style}">{(_cnt.abstract[:500] if _cnt.abstract else "—")}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             with _bp2:
-                with st.expander("⚙️ Methodology", expanded=True):
-                    st.write(_partial.get("methodology") or "—")
+                st.markdown(
+                    f'<div style="{_pc_style}">'
+                    f'<p style="{_ph_style}">⚙️ Methodology</p>'
+                    f'<p style="{_pt_style}">{(_partial.get("methodology") or "—")}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             with _bp3:
-                with st.expander("📊 Results", expanded=True):
-                    st.write(_partial.get("results_sum") or "—")
+                st.markdown(
+                    f'<div style="{_pc_style}">'
+                    f'<p style="{_ph_style}">📊 Results</p>'
+                    f'<p style="{_pt_style}">{(_partial.get("results_sum") or "—")}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
             _disp_eqs = [e for e in _cnt.equations if not e.is_inline]
             if _disp_eqs:
@@ -1353,15 +1374,36 @@ if report:
                 unsafe_allow_html=True,
             )
             s1, s2, s3 = st.columns(3, gap="medium")
+            _card_style = (
+                "background:#161b22;border:1px solid #21262d;border-radius:10px;"
+                "padding:14px 16px;height:100%"
+            )
+            _hdr_style = "font-size:13px;font-weight:600;color:#8b949e;margin:0 0 8px 0"
+            _txt_style = "font-size:13px;color:#c9d1d9;line-height:1.6;margin:0"
             with s1:
-                with st.expander("📖 Abstract", expanded=True):
-                    st.write(report.summary.abstract_summary)
+                st.markdown(
+                    f'<div style="{_card_style}">'
+                    f'<p style="{_hdr_style}">📖 Abstract</p>'
+                    f'<p style="{_txt_style}">{report.summary.abstract_summary or "—"}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             with s2:
-                with st.expander("⚙️ Methodology", expanded=True):
-                    st.write(report.summary.methodology_summary)
+                st.markdown(
+                    f'<div style="{_card_style}">'
+                    f'<p style="{_hdr_style}">⚙️ Methodology</p>'
+                    f'<p style="{_txt_style}">{report.summary.methodology_summary or "—"}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
             with s3:
-                with st.expander("📊 Results", expanded=True):
-                    st.write(report.summary.results_summary)
+                st.markdown(
+                    f'<div style="{_card_style}">'
+                    f'<p style="{_hdr_style}">📊 Results</p>'
+                    f'<p style="{_txt_style}">{report.summary.results_summary or "—"}</p>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
         if report.key_points:
             st.markdown('<p class="sec-label">Key Findings</p>', unsafe_allow_html=True)
