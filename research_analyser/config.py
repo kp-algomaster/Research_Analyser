@@ -95,7 +95,11 @@ class Config(BaseSettings):
     )
     hf_token: Optional[str] = Field(default=None, alias="HF_TOKEN")
 
-    model_config = {"env_prefix": "RESEARCH_ANALYSER_", "env_nested_delimiter": "__"}
+    model_config = {
+        "env_prefix": "RESEARCH_ANALYSER_",
+        "env_nested_delimiter": "__",
+        "extra": "ignore",  # tolerate unknown yaml keys (e.g. from newer config.yaml)
+    }
 
     @classmethod
     def load(cls, config_path: Optional[str] = None) -> Config:

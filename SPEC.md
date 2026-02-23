@@ -27,7 +27,10 @@ Input (PDF/URL) → Extraction (MonkeyOCR) → Analysis (Review + Diagrams) → 
 | OCR Engine | MonkeyOCR | 1.5 (pro-3B) | github.com/Yuliang-Liu/MonkeyOCR |
 | Diagram Generator | PaperBanana | latest | github.com/llmsresearch/paperbanana |
 | Paper Reviewer | agentic-paper-review | latest | github.com/debashis1983/agentic-paper-review |
+| STORM Reporter | knowledge-storm | >=1.0.0 | pypi.org/project/knowledge-storm |
+| TTS Engine | Qwen3-TTS | latest | huggingface.co/Qwen/Qwen3-TTS |
 | Web Framework | Streamlit | >=1.30 | pypi.org/project/streamlit |
+| Native Window | pywebview | >=5.0 | pypi.org/project/pywebview |
 | API Framework | FastAPI | >=0.100 | pypi.org/project/fastapi |
 | PDF Processing | PyMuPDF | >=1.23 | pypi.org/project/PyMuPDF |
 
@@ -390,7 +393,55 @@ class ReportGenerator:
         """
 ```
 
-### 3.7 STORM Reporter (`research_analyser/storm_reporter.py`)
+### 3.6 TTS Engine Module (`research_analyser/tts_engine.py`)
+
+**Purpose:** Generate spoken audio narration of the analysis report using Qwen3-TTS.
+
+**Interface:**
+```python
+class TTSEngine:
+    def __init__(self, config: TTSConfig): ...
+
+    async def synthesize(self, report: AnalysisReport, output_dir: Path) -> Optional[Path]:
+        """Synthesize audio narration from the report summary and key points.
+
+        - Builds narration script from summary + key points
+        - Runs Qwen3-TTS model inference (deferred to thread via asyncio.to_thread)
+        - Writes WAV to output_dir/analysis_audio.wav
+        - Returns path to WAV file, or None if TTS is disabled/fails
+
+        Raises: ImportError if soundfile not installed
+        """
+```
+
+**Key notes:**
+- Disabled by default (`tts.enabled: false` in config)
+- HF token required for model download: `HF_TOKEN` env var
+- Output: 24 kHz mono WAV at `{output_dir}/analysis_audio.wav`
+
+### 3.7 Comparison Utility (`research_analyser/comparison.py`)
+
+**Purpose:** Compare the local agentic review against external review systems (e.g. PaperReview.ai).
+
+**Interface:**
+```python
+@dataclass
+class ReviewSnapshot:
+    source: str                          # "local", "paperreview_ai", etc.
+    overall_score: Optional[float]
+    soundness: Optional[float]
+    presentation: Optional[float]
+    contribution: Optional[float]
+    confidence: Optional[float]
+
+def parse_local_review(output_dir: Path) -> ReviewSnapshot:
+    """Load scores from metadata.json written by save_all()."""
+
+def build_comparison_markdown(snapshots: list[ReviewSnapshot]) -> str:
+    """Render a Markdown table comparing scores across all sources."""
+```
+
+### 3.8 STORM Reporter (`research_analyser/storm_reporter.py`)
 
 **Purpose:** Generate Wikipedia-style cited articles from paper content using Stanford OVAL's
 `knowledge-storm` library. Requires `pip install knowledge-storm`.
@@ -424,7 +475,7 @@ class PaperContentRM(dspy.Retrieve):
     def forward(self, query_or_queries, exclude_urls=None) -> list[dspy.Example]: ...
 ```
 
-### 3.6 Main Orchestrator (`research_analyser/analyser.py`)
+### 3.9 Main Orchestrator (`research_analyser/analyser.py`)
 
 **Purpose:** Coordinate all modules in the analysis pipeline.
 
@@ -509,12 +560,19 @@ async def analyse_paper(
 
 ## 5. Configuration Schema
 
+> **Bundled app note:** When running as a macOS `.app`, the launcher overrides
+> `output_dir` and `temp_dir` via `RESEARCH_ANALYSER_APP__OUTPUT_DIR` and
+> `RESEARCH_ANALYSER_APP__TEMP_DIR` environment variables, pointing both to
+> `~/ResearchAnalyserOutput/` and `~/ResearchAnalyserOutput/tmp/` respectively.
+> Never use relative paths (`./output`) inside a frozen bundle — the `.app` bundle
+> is read-only.
+
 ```yaml
 # config.yaml
 app:
   name: "Research Analyser"
-  output_dir: "./output"
-  temp_dir: "./tmp"
+  output_dir: "./output"      # Overridden to ~/ResearchAnalyserOutput in bundled .app
+  temp_dir: "./tmp"           # Overridden to ~/ResearchAnalyserOutput/tmp in bundled .app
   log_level: "INFO"
 
 ocr:
@@ -593,3 +651,75 @@ tests/
     ├── sample_markdown.md          # Pre-extracted content
     └── sample_equations.json       # Known equations for validation
 ```
+
+---
+
+## 8. macOS Packaging and Distribution
+
+### 8.1 Bundle Architecture
+
+The macOS `.app` is built with PyInstaller (`--windowed`, one-dir mode).
+The Streamlit UI runs in a native `WKWebView` window via `pywebview` — no external browser required.
+
+```
+ResearchAnalyser.app/
+├── Contents/
+│   ├── MacOS/ResearchAnalyser       # Frozen executable (entry: packaging/macos_launcher.py)
+│   ├── Frameworks/                  # sys._MEIPASS — Python runtime + all packages
+│   │   ├── app.py                   # Symlink → ../Resources/app.py
+│   │   ├── config.yaml
+│   │   ├── research_analyser/       # Package source
+│   │   ├── AppKit/, WebKit/, Foundation/, objc/   # PyObjC for WKWebView
+│   │   └── ...
+│   └── Resources/                   # Static assets collected by PyInstaller
+│       ├── app.py
+│       ├── streamlit/, langchain/, webview/, ...
+│       └── research_analyser/
+```
+
+### 8.2 Launcher (`packaging/macos_launcher.py`)
+
+**Startup sequence:**
+1. Initialise file logging → `~/ResearchAnalyserOutput/launcher.log`
+2. Set writable env vars (`RESEARCH_ANALYSER_APP__OUTPUT_DIR`, `RESEARCH_ANALYSER_APP__TEMP_DIR`)
+3. Find a free TCP port in range 8502–8600
+4. Start Streamlit in a **daemon thread** with signal.signal monkey-patched
+   - Streamlit calls `signal.signal()` at startup; this raises `ValueError` outside the main thread
+   - The patch silently swallows `ValueError` so the server keeps running
+5. Poll `http://localhost:{port}/_stcore/health` (90 s timeout)
+6. Open `webview.create_window(...)` on the **main thread** (AppKit requirement)
+7. Call `webview.start()` — blocks until window is closed
+
+**Critical constraints:**
+- `webview.start()` MUST be called from the main thread (macOS AppKit requirement)
+- `signal.signal()` MUST be monkey-patched before `stcli.main()` is called in the thread
+- All output paths MUST resolve to writable locations outside the `.app` bundle
+
+### 8.3 Build Script (`scripts/build_macos_dmg.sh`)
+
+```bash
+# Prerequisites
+python3.12 -m venv .venv312
+source .venv312/bin/activate
+pip install -r requirements.txt
+
+# Build
+./scripts/build_macos_dmg.sh
+# → dist/ResearchAnalyser.app
+# → dist/ResearchAnalyser.dmg
+```
+
+**Key PyInstaller flags:**
+- `--windowed` — macOS `.app` bundle (no terminal window)
+- `--collect-all webview` + `--hidden-import webview.platforms.cocoa` — pywebview + PyObjC
+- `--collect-all knowledge_storm dspy litellm` — STORM pipeline
+- Pre-build step deletes all `__pycache__` to prevent stale `.pyc` files in bundle
+
+### 8.4 Output Directory Policy
+
+| Context | `output_dir` | `temp_dir` |
+|---------|-------------|------------|
+| Dev / CLI | `./output` (configurable) | `./tmp` |
+| macOS `.app` | `~/ResearchAnalyserOutput/` | `~/ResearchAnalyserOutput/tmp/` |
+
+The Streamlit UI sidebar always shows the effective output directory and allows the user to change it.

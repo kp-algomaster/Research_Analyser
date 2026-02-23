@@ -1,7 +1,7 @@
 # Research Analyser - Project Guide
 
 ## Project Overview
-AI-powered research paper analysis tool combining MonkeyOCR 1.5, PaperBanana, Stanford Agentic Reviewer, and Qwen3-TTS.
+AI-powered research paper analysis tool combining MonkeyOCR 1.5, PaperBanana, Stanford Agentic Reviewer, Qwen3-TTS, and STORM Wikipedia-style reporting.
 
 ## Key Files
 - `research_analyser/analyser.py` - Main orchestrator
@@ -9,9 +9,13 @@ AI-powered research paper analysis tool combining MonkeyOCR 1.5, PaperBanana, St
 - `research_analyser/ocr_engine.py` - MonkeyOCR integration
 - `research_analyser/diagram_generator.py` - PaperBanana integration
 - `research_analyser/reviewer.py` - Agentic review (LangGraph)
+- `research_analyser/storm_reporter.py` - STORM Wikipedia-style report
 - `research_analyser/tts_engine.py` - Qwen3-TTS audio narration
+- `research_analyser/comparison.py` - Score comparison utility
 - `research_analyser/report_generator.py` - Output assembly
-- `SPEC.md` - Full specification document
+- `packaging/macos_launcher.py` - macOS .app launcher (pywebview + Streamlit)
+- `scripts/build_macos_dmg.sh` - PyInstaller DMG build script
+- `SPEC.md` - Full specification document (source of truth)
 - `docs/key_points_and_equations.md` - Formulae reference
 
 ## Key Formula
@@ -23,9 +27,17 @@ Where S=Soundness, P=Presentation, C=Contribution (each 1-4 scale)
 - Web UI: `streamlit run app.py`
 - API: `uvicorn research_analyser.api:app`
 - Tests: `pytest tests/`
+- Build macOS DMG: `./scripts/build_macos_dmg.sh`
+
+## macOS Bundle Notes
+- Output dir in bundled .app → `~/ResearchAnalyserOutput/` (read-only bundle workaround)
+- Launcher logs → `~/ResearchAnalyserOutput/launcher.log`
+- `signal.signal()` is monkey-patched in the Streamlit thread (main thread owned by pywebview)
+- Always delete `__pycache__` before building to avoid stale `.pyc` in bundle
 
 ## Dependencies
 - MonkeyOCR: github.com/Yuliang-Liu/MonkeyOCR
 - PaperBanana: github.com/llmsresearch/paperbanana
 - Agentic Review: github.com/debashis1983/agentic-paper-review
 - Qwen3-TTS: huggingface.co/Qwen/Qwen3-TTS
+- STORM: pypi.org/project/knowledge-storm

@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import copy_metadata
 
 datas = [('app.py', '.'), ('config.yaml', '.'), ('monkeyocr.py', '.'), ('research_analyser', 'research_analyser')]
 binaries = []
-hiddenimports = ['langgraph', 'langgraph.graph', 'langchain_openai', 'langchain_community', 'langchain_core', 'tavily', 'sklearn', 'sklearn.utils', 'tiktoken', 'tiktoken_ext', 'tiktoken_ext.openai_public']
+hiddenimports = ['webview', 'webview.platforms.cocoa', 'langgraph', 'langgraph.graph', 'langchain_openai', 'langchain_community', 'langchain_core', 'tavily', 'sklearn', 'sklearn.utils', 'tiktoken', 'tiktoken_ext', 'tiktoken_ext.openai_public', 'dspy', 'dspy.predict', 'dspy.retrieve', 'knowledge_storm', 'knowledge_storm.lm', 'knowledge_storm.rm', 'litellm', 'litellm.utils']
 datas += collect_data_files('pandas')
 datas += copy_metadata('pandas')
 datas += copy_metadata('pydantic')
@@ -16,6 +16,11 @@ datas += copy_metadata('httpx')
 datas += copy_metadata('aiohttp')
 datas += copy_metadata('rich')
 datas += copy_metadata('click')
+datas += copy_metadata('knowledge-storm')
+datas += copy_metadata('dspy-ai')
+datas += copy_metadata('litellm')
+tmp_ret = collect_all('webview')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('streamlit')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('altair')
@@ -31,6 +36,12 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('langchain_community')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('langchain_core')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('knowledge_storm')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('dspy')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('litellm')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

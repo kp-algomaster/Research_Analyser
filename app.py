@@ -4,20 +4,17 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
+import urllib.request
 from pathlib import Path
 
 import streamlit as st
 
-from research_analyser.analyser import ResearchAnalyser
-from research_analyser.comparison import (
-    ReviewSnapshot,
-    build_comparison_markdown,
-    parse_external_review,
-    parse_local_review,
-)
+# Lightweight imports only — heavy ML libs are deferred to handler scope
+# so the initial page render is fast (no 30-60 s skeleton freeze).
 from research_analyser.config import Config
 from research_analyser.models import AnalysisOptions
-from research_analyser.reviewer import interpret_score
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,9 +24,249 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── Custom CSS ───────────────────────────────────────────────────────────────
+st.markdown(
+    """
+    <style>
+    .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-right: 4px;
+    }
+    .badge-green  { background: #1a4a1a; color: #4ade80; border: 1px solid #166534; }
+    .badge-gray   { background: #2a2a2a; color: #9ca3af; border: 1px solid #374151; }
+    .dot-green    { color: #4ade80; }
+    .dot-red      { color: #f87171; }
+    .svc-url      { font-size: 0.78rem; color: #6b7280; margin-top: -8px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── Server Management helpers ─────────────────────────────────────────────────
+
+_SERVICES: dict[str, dict] = {
+    "Analysis API": {
+        "url": "http://127.0.0.1:8000",
+        "health": "http://127.0.0.1:8000/api/v1/health",
+        "cmd": [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "research_analyser.api:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8000",
+        ],
+        "devices": ["auto", "mps", "cpu"],
+        "managed": True,
+    },
+    "OCR Engine": {
+        "url": "In-process",
+        "health": None,
+        "cmd": None,
+        "devices": ["auto", "mps", "cpu"],
+        "managed": False,
+    },
+    "Review Engine": {
+        "url": "In-process",
+        "health": None,
+        "cmd": None,
+        "devices": ["auto", "cpu"],
+        "managed": False,
+    },
+}
+
+
+def _http_ok(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=1) as r:
+            return r.status < 400
+    except Exception:
+        return False
+
+
+def _active_device_label(device: str) -> str:
+    """Return the hardware backend label for a given device setting."""
+    if device in ("auto", "mps"):
+        try:
+            import torch
+
+            if torch.backends.mps.is_available():
+                return "MLX (METAL)"
+            if torch.cuda.is_available():
+                return "CUDA"
+        except ImportError:
+            pass
+    return "CPU"
+
+
+def _is_connected(name: str) -> bool:
+    svc = _SERVICES[name]
+    if svc["health"]:
+        return _http_ok(svc["health"])
+    if name == "OCR Engine":
+        return True  # always available in-process
+    if name == "Review Engine":
+        return True
+    return False
+
+
+def _proc_running(name: str) -> bool:
+    proc = st.session_state.get(f"proc_{name}")
+    return proc is not None and proc.poll() is None
+
+
+def _start_service(name: str) -> None:
+    cmd = _SERVICES[name]["cmd"]
+    if cmd is None:
+        return
+    device = st.session_state.get(f"device_{name}", "auto")
+    env = {**os.environ}
+    if device != "auto":
+        env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+        env["DEVICE"] = device
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    st.session_state[f"proc_{name}"] = proc
+
+
+def _stop_service(name: str) -> None:
+    proc = st.session_state.get(f"proc_{name}")
+    if proc and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    st.session_state.pop(f"proc_{name}", None)
+
+
+def show_server_management() -> None:
+    """Render the Server Management page."""
+
+    left, right = st.columns([3, 2], gap="large")
+
+    with left:
+        st.subheader("Server Management")
+
+        for name, svc in _SERVICES.items():
+            connected = _is_connected(name)
+            device = st.session_state.get(f"device_{name}", "auto")
+            dot_cls = "dot-green" if connected else "dot-red"
+            dot_label = "Connected" if connected else "Disconnected"
+
+            with st.container(border=True):
+                # Header row: name + connection status
+                hdr_l, hdr_r = st.columns([4, 2])
+                hdr_l.markdown(f"**{name}**")
+                hdr_r.markdown(
+                    f'<span class="{dot_cls}">●</span> {dot_label}',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<p class="svc-url">{svc["url"]}</p>', unsafe_allow_html=True
+                )
+
+                # Controls row
+                b_restart, b_stop, _, dev_col, act_col = st.columns(
+                    [1.1, 1, 0.3, 1.8, 2]
+                )
+
+                if b_restart.button("↺ Restart", key=f"restart_{name}", use_container_width=True):
+                    if svc["managed"]:
+                        _stop_service(name)
+                        _start_service(name)
+                    st.rerun()
+
+                if b_stop.button("⬛ Stop", key=f"stop_{name}", use_container_width=True):
+                    if svc["managed"]:
+                        _stop_service(name)
+                    st.rerun()
+
+                chosen = dev_col.selectbox(
+                    "Device",
+                    svc["devices"],
+                    index=svc["devices"].index(
+                        st.session_state.get(f"device_{name}", "auto")
+                    ),
+                    key=f"device_{name}",
+                    label_visibility="collapsed",
+                )
+
+                active_label = _active_device_label(chosen)
+                act_col.markdown(
+                    f'<span class="badge badge-green">Active: {active_label}</span>',
+                    unsafe_allow_html=True,
+                )
+
+    with right:
+        st.subheader("Server Status")
+
+        for name in _SERVICES:
+            connected = _is_connected(name)
+            dot_cls = "dot-green" if connected else "dot-red"
+            dot_label = "Connected" if connected else "Disconnected"
+            c1, c2 = st.columns([3, 2])
+            c1.write(name)
+            c2.markdown(
+                f'<span class="{dot_cls}">●</span> {dot_label}',
+                unsafe_allow_html=True,
+            )
+
+        st.divider()
+
+        # Device/model badges
+        try:
+            import torch
+
+            if torch.backends.mps.is_available():
+                device_badge = "MLX (METAL)"
+            elif torch.cuda.is_available():
+                device_badge = "CUDA"
+            else:
+                device_badge = "CPU"
+        except ImportError:
+            device_badge = "CPU"
+
+        st.markdown(
+            f'<span class="badge badge-green">Model Ready</span>'
+            f'<span class="badge badge-green">Device: {device_badge}</span>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        keep = st.toggle(
+            "Keep servers running when app closes",
+            value=st.session_state.get("keep_running", False),
+            key="keep_running",
+        )
+        if keep:
+            st.caption(
+                "When enabled, the backend will continue running "
+                "in the background after closing the app."
+            )
+
+# ── Page navigation ───────────────────────────────────────────────────────────
+
+st.sidebar.markdown("## Navigation")
+page = st.sidebar.radio(
+    "Go to",
+    ["Analyse Paper", "Server Management"],
+    label_visibility="collapsed",
+)
+
+if page == "Server Management":
+    st.title("Research Analyser")
+    show_server_management()
+    st.stop()
+
+# ── Analyse Paper page ────────────────────────────────────────────────────────
 st.title("Research Analyser")
 st.markdown("AI-powered research paper analysis with OCR, diagram generation, and peer review.")
-
 
 # Sidebar configuration
 st.sidebar.header("Configuration")
@@ -74,7 +311,11 @@ diagram_provider = st.sidebar.selectbox(
     help="PaperBanana VLM provider for diagram generation",
 )
 venue = st.sidebar.text_input("Target Venue (optional)", placeholder="e.g., ICLR 2026")
-output_dir = st.sidebar.text_input("Output Directory", value="./output")
+_default_output = os.environ.get(
+    "RESEARCH_ANALYSER_OUTPUT_DIR",
+    str(Path.home() / "ResearchAnalyserOutput"),
+)
+output_dir = st.sidebar.text_input("Output Directory", value=_default_output)
 
 # Main input area
 st.header("Input")
@@ -128,6 +369,7 @@ if st.button("Analyse Paper", type="primary", use_container_width=True):
             diagram_types=diagram_types,
         )
 
+        from research_analyser.analyser import ResearchAnalyser  # deferred heavy import
         analyser = ResearchAnalyser(config=config)
 
         # Handle file upload
@@ -200,6 +442,7 @@ if st.button("Analyse Paper", type="primary", use_container_width=True):
 
                 # Peer Review
                 if report.review:
+                    from research_analyser.reviewer import interpret_score  # deferred
                     st.subheader("Peer Review")
                     score = report.review.overall_score
                     decision = interpret_score(score)
@@ -279,6 +522,12 @@ ext_file = st.file_uploader(
 
 if ext_file is not None:
     try:
+        from research_analyser.comparison import (  # deferred heavy import
+            ReviewSnapshot,
+            build_comparison_markdown,
+            parse_local_review,
+        )
+        from research_analyser.reviewer import interpret_score  # deferred
         raw_bytes = ext_file.getvalue()
         ext_data = json.loads(raw_bytes.decode("utf-8"))
 
