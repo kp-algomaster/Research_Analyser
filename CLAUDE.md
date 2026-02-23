@@ -29,6 +29,11 @@ Where S=Soundness, P=Presentation, C=Contribution (each 1-4 scale)
 - Tests: `pytest tests/`
 - Build macOS DMG: `./scripts/build_macos_dmg.sh`
 
+## Git Commits
+- Author is always `kp-algomaster <kp-algomaster@users.noreply.github.com>`
+- NEVER add `Co-Authored-By` trailer lines to commit messages
+- Write commit messages without any AI attribution
+
 ## Git Push — GitHub PAT
 The GitHub Personal Access Token is stored as `GITHUB_PAT` in `.env`.
 When pushing to GitHub, ALWAYS use this pattern (inject token, push, restore clean URL):
