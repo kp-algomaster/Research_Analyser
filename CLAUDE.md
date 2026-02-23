@@ -29,6 +29,17 @@ Where S=Soundness, P=Presentation, C=Contribution (each 1-4 scale)
 - Tests: `pytest tests/`
 - Build macOS DMG: `./scripts/build_macos_dmg.sh`
 
+## Git Push — GitHub PAT
+The GitHub Personal Access Token is stored as `GITHUB_PAT` in `.env`.
+When pushing to GitHub, ALWAYS use this pattern (inject token, push, restore clean URL):
+```bash
+GITHUB_PAT=$(grep '^GITHUB_PAT=' .env | cut -d= -f2- | tr -d '"' | tr -d "'")
+git remote set-url origin "https://kp-algomaster:${GITHUB_PAT}@github.com/kp-algomaster/Research_Analyser.git"
+git push origin main
+git remote set-url origin https://github.com/kp-algomaster/Research_Analyser.git
+```
+Never commit `.env` or embed the PAT value directly in any file or command output.
+
 ## macOS Bundle Notes
 - Output dir in bundled .app → `~/ResearchAnalyserOutput/` (read-only bundle workaround)
 - Launcher logs → `~/ResearchAnalyserOutput/launcher.log`
