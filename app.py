@@ -46,7 +46,7 @@ st.markdown("""
 [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label {
     display: flex !important; align-items: center !important;
     padding: 9px 14px !important; border-radius: 8px !important;
-    color: #8b949e !important; font-size: 13.5px !important;
+    color: #adb8c4 !important; font-size: 13.5px !important;
     cursor: pointer !important; transition: all 0.15s !important;
     font-weight: 500 !important;
 }
@@ -77,12 +77,12 @@ st.markdown("""
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text;
 }
-.hero-sub { color: #8b949e; font-size: 13px; margin: 0; }
+.hero-sub { color: #c9d1d9; font-size: 13.5px; margin: 0; line-height: 1.6; }
 
 /* ── Section label ── */
 .sec-label {
-    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
-    color: #388bfd; text-transform: uppercase; margin: 18px 0 10px 0;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.10em;
+    color: #58a6ff; text-transform: uppercase; margin: 18px 0 10px 0;
 }
 
 /* ── Containers (border override) ── */
@@ -195,8 +195,31 @@ hr { border-color: #21262d !important; margin: 20px 0 !important; }
 [data-testid="stAlert"] { border-radius: 10px !important; border-left-width: 3px !important; }
 
 /* ── Checkboxes / toggles ── */
-.stCheckbox > label, .stToggle > label { font-size: 13px !important; color: #8b949e !important; }
+.stCheckbox > label, .stToggle > label { font-size: 13.5px !important; color: #c9d1d9 !important; font-weight: 500 !important; }
 .stCheckbox > label:hover, .stToggle > label:hover { color: #f0f6fc !important; }
+
+/* ── Pills (st.pills diagram type chips) ── */
+[data-testid="stPills"] button {
+    background: #21262d !important; border: 1px solid #30363d !important;
+    color: #8b949e !important; border-radius: 99px !important;
+    font-size: 12.5px !important; font-weight: 600 !important;
+    padding: 5px 14px !important; transition: all 0.15s !important;
+}
+[data-testid="stPills"] button:hover {
+    border-color: #58a6ff !important; color: #c9d1d9 !important;
+    background: #1f2d47 !important;
+}
+[data-testid="stPills"] button[aria-selected="true"],
+[data-testid="stPills"] button[aria-pressed="true"],
+[data-testid="stPills"] button[data-selected="true"] {
+    background: #1f2d47 !important; border-color: #388bfd !important;
+    color: #58a6ff !important;
+}
+[data-testid="stPills"] > label {
+    font-size: 11px !important; font-weight: 700 !important;
+    letter-spacing: 0.08em !important; text-transform: uppercase !important;
+    color: #58a6ff !important;
+}
 
 /* ── Custom badge + dot ── */
 .badge {
@@ -664,17 +687,26 @@ st.markdown("""
 # ── Analysis options ──────────────────────────────────────────────────────────
 with st.container(border=True):
     st.markdown('<p class="sec-label">Analysis Options</p>', unsafe_allow_html=True)
-    opt_c1, opt_c2, opt_c3, opt_c4, opt_c5 = st.columns(5)
-    generate_diagrams = opt_c1.checkbox("📊  Diagrams",    value=True)
-    generate_review   = opt_c2.checkbox("🧐  Peer Review", value=True)
-    generate_audio    = opt_c3.checkbox("🎙️  Audio (TTS)",  value=_cfg("tts_enabled", False))
-    generate_storm    = opt_c4.checkbox("🌪️  STORM Report", value=_cfg("storm_enabled", False))
-    diagram_types = opt_c5.multiselect(
-        "Diagram types",
-        ["methodology", "architecture", "results"],
-        default=["methodology"],
-        label_visibility="visible",
-    )
+    opt_c1, opt_c2, opt_c3, opt_c4 = st.columns(4)
+    generate_diagrams = opt_c1.checkbox("📊  Diagrams",     value=True,  key="opt_diagrams")
+    generate_review   = opt_c2.checkbox("🧐  Peer Review",  value=True,  key="opt_review")
+    generate_audio    = opt_c3.checkbox("🎙️  Audio (TTS)",   value=_cfg("tts_enabled", False),  key="opt_audio")
+    generate_storm    = opt_c4.checkbox("🌪️  STORM Report",  value=_cfg("storm_enabled", False), key="opt_storm")
+
+    if generate_diagrams:
+        st.markdown('<div style="height:1px;background:#21262d;margin:12px 0 14px"></div>', unsafe_allow_html=True)
+        _dt_options = {"📐 Methodology": "methodology", "🏗️ Architecture": "architecture", "📈 Results": "results"}
+        _dt_labels  = list(_dt_options.keys())
+        _dt_selected_labels = st.pills(
+            "Diagram Types",
+            _dt_labels,
+            selection_mode="multi",
+            default=[_dt_labels[0]],
+            key="diagram_type_pills",
+        )
+        diagram_types = [_dt_options[l] for l in (_dt_selected_labels or [_dt_labels[0]])]
+    else:
+        diagram_types = ["methodology"]
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 st.markdown('<p class="sec-label">Input</p>', unsafe_allow_html=True)
