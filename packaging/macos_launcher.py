@@ -20,6 +20,7 @@ Subsequent launches skip straight to step 5.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -39,6 +40,29 @@ _SETUP_MARKER   = _APP_SUPPORT / ".setup_v2_complete"
 _OUTPUT_DIR     = Path.home() / "ResearchAnalyserOutput"
 # Extracted standalone Python 3.12 (from the bundled tarball in the .app).
 _BUNDLED_PYTHON = _APP_SUPPORT / "python312"
+# Auto-update: live sources fetched from GitHub at each launch.
+_SOURCES_DIR     = _APP_SUPPORT / "sources"
+_GITHUB_SHA_FILE = _APP_SUPPORT / ".github_sha"
+_GITHUB_RAW_BASE = "https://raw.githubusercontent.com/kp-algomaster/Research_Analyser/main"
+_GITHUB_API_URL  = "https://api.github.com/repos/kp-algomaster/Research_Analyser/commits/main"
+_SOURCE_FILES = [
+    "app.py",
+    "monkeyocr.py",
+    "research_analyser/__init__.py",
+    "research_analyser/analyser.py",
+    "research_analyser/api.py",
+    "research_analyser/comparison.py",
+    "research_analyser/config.py",
+    "research_analyser/diagram_generator.py",
+    "research_analyser/exceptions.py",
+    "research_analyser/input_handler.py",
+    "research_analyser/models.py",
+    "research_analyser/ocr_engine.py",
+    "research_analyser/report_generator.py",
+    "research_analyser/reviewer.py",
+    "research_analyser/storm_reporter.py",
+    "research_analyser/tts_engine.py",
+]
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -231,6 +255,69 @@ def _wait_for_server(port: int, timeout: int = 120) -> bool:
     return False
 
 
+# ── Auto-update: fetch latest sources from GitHub ─────────────────────────────
+
+def _auto_update_sources() -> Path | None:
+    """Fetch the latest source files from GitHub main and cache them locally.
+
+    On every launch we query the latest commit SHA via the GitHub API (3 s
+    timeout).  If the SHA matches the last-downloaded value, nothing is fetched
+    — the cached sources directory is returned immediately.  On a new commit we
+    download all files in _SOURCE_FILES and update the SHA marker.
+
+    Returns the sources directory if usable (cached or freshly downloaded),
+    or None if the network is unavailable and no local cache exists.
+    """
+    try:
+        req = urllib.request.Request(
+            _GITHUB_API_URL,
+            headers={
+                "User-Agent": "ResearchAnalyser-Launcher",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read())
+        latest_sha = data.get("sha", "")[:12]
+    except Exception as exc:
+        log.warning("GitHub SHA check failed (%s) — using cached sources", exc)
+        return _SOURCES_DIR if (_SOURCES_DIR / "app.py").exists() else None
+
+    stored_sha = _GITHUB_SHA_FILE.read_text().strip() if _GITHUB_SHA_FILE.exists() else ""
+    if stored_sha == latest_sha and (_SOURCES_DIR / "app.py").exists():
+        log.info("Sources already up-to-date (SHA=%s)", latest_sha)
+        return _SOURCES_DIR
+
+    log.info("New commit: %s → %s — updating sources…", stored_sha or "none", latest_sha)
+    _SOURCES_DIR.mkdir(parents=True, exist_ok=True)
+    (_SOURCES_DIR / "research_analyser").mkdir(parents=True, exist_ok=True)
+
+    ok = fail = 0
+    for rel_path in _SOURCE_FILES:
+        url = f"{_GITHUB_RAW_BASE}/{rel_path}"
+        dest = _SOURCES_DIR / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            file_req = urllib.request.Request(
+                url, headers={"User-Agent": "ResearchAnalyser-Launcher"}
+            )
+            with urllib.request.urlopen(file_req, timeout=10) as resp:
+                dest.write_bytes(resp.read())
+            ok += 1
+            log.debug("Updated %s", rel_path)
+        except Exception as exc:
+            fail += 1
+            log.warning("Failed to download %s: %s", rel_path, exc)
+
+    if ok > 0:
+        _GITHUB_SHA_FILE.write_text(latest_sha)
+        log.info("Sources updated: %d OK / %d failed (SHA=%s)", ok, fail, latest_sha)
+        return _SOURCES_DIR
+
+    log.error("All source downloads failed — will use bundle")
+    return None
+
+
 # ── Packages installed into the companion venv ────────────────────────────────
 # pip/wheel first so upgrades propagate; torch last (biggest download).
 _PACKAGES = [
@@ -371,7 +458,9 @@ def _inject_dotenv(env: dict, dotenv_path: Path) -> None:
         log.warning("Failed to load .env from %s: %s", dotenv_path, exc)
 
 
-def _launch_streamlit(port: int, app_script: Path, config_file: Path) -> subprocess.Popen | None:
+def _launch_streamlit(
+    port: int, app_script: Path, config_file: Path, pythonpath: str
+) -> subprocess.Popen | None:
     """Start Streamlit from the companion venv; return the process or None."""
     python = _VENV / "bin" / "python"
     if not python.exists():
@@ -380,8 +469,8 @@ def _launch_streamlit(port: int, app_script: Path, config_file: Path) -> subproc
 
     env = {
         **os.environ,
-        # Allow research_analyser package to be imported from the bundle
-        "PYTHONPATH": str(app_script.parent),
+        # Sources dir is first in PYTHONPATH so live code overrides the bundle.
+        "PYTHONPATH": pythonpath,
         "RESEARCH_ANALYSER_OUTPUT_DIR": str(_OUTPUT_DIR),
         "RESEARCH_ANALYSER_APP__OUTPUT_DIR": str(_OUTPUT_DIR),
         "RESEARCH_ANALYSER_APP__TEMP_DIR": str(_OUTPUT_DIR / "tmp"),
@@ -460,8 +549,21 @@ def _do_setup(window, port: int, app_script: Path, config_file: Path) -> None:
 
 
 def _finish_launch(window, port: int, app_script: Path, config_file: Path) -> None:
-    """Start Streamlit and navigate the existing window to it."""
-    proc = _launch_streamlit(port, app_script, config_file)
+    """Start Streamlit (with latest sources from GitHub) and navigate the window."""
+    bundle_dir = app_script.parent
+
+    # Pull latest sources from GitHub (3 s API timeout; falls back to cache).
+    sources = _auto_update_sources()
+    if sources and (sources / "app.py").exists():
+        live_app   = sources / "app.py"
+        pythonpath = str(sources) + ":" + str(bundle_dir)
+        log.info("Using live sources: %s", sources)
+    else:
+        live_app   = app_script
+        pythonpath = str(bundle_dir)
+        log.info("Using bundle sources (no live update available)")
+
+    proc = _launch_streamlit(port, live_app, config_file, pythonpath)
     if proc is None:
         window.evaluate_js('showError("Could not start Streamlit.")')
         return
