@@ -186,6 +186,8 @@ class GeneratedDiagram:
     source_context: str
     iterations: int = 0
     format: str = "png"
+    is_fallback: bool = False
+    error: str = ""
 
 
 @dataclass

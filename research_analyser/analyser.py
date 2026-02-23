@@ -88,6 +88,7 @@ class ResearchAnalyser:
         source: str,
         source_type: Optional[str] = None,
         options: Optional[AnalysisOptions] = None,
+        on_progress=None,
     ) -> AnalysisReport:
         """Run complete analysis pipeline.
 
@@ -101,6 +102,13 @@ class ResearchAnalyser:
         """
         start_time = time.time()
         options = options or AnalysisOptions()
+
+        def _progress(message: str) -> None:
+            if on_progress is not None:
+                try:
+                    on_progress(message)
+                except Exception:
+                    pass
 
         # 1. Detect source type
         if source_type:
@@ -117,18 +125,31 @@ class ResearchAnalyser:
         logger.info(f"Analysing paper: {source} (type: {detected_type.value})")
 
         # 2. Resolve to local PDF
+        _progress("⬇️  Fetching PDF…")
         pdf_path = await self.input_handler.resolve(paper_input)
         logger.info(f"Resolved to: {pdf_path}")
+        _progress(f"✓  PDF ready — {pdf_path.name}")
 
         # 3. Extract content via MonkeyOCR
-        logger.info("Extracting content with MonkeyOCR...")
+        _progress("🔍  Extracting content (OCR)…")
         content = await self.ocr_engine.extract(pdf_path)
         logger.info(
             f"Extracted: {len(content.equations)} equations, "
             f"{len(content.tables)} tables, {len(content.figures)} figures"
         )
+        _progress(
+            f"✓  Extracted {len(content.sections)} sections · "
+            f"{len(content.equations)} equations · {len(content.figures)} figures"
+        )
 
         # 4. Run analysis tasks in parallel
+        task_names = (
+            (["diagrams"] if options.generate_diagrams else [])
+            + (["peer review"] if options.generate_review else [])
+        )
+        if task_names:
+            _progress(f"🤖  Generating {' & '.join(task_names)}…")
+
         tasks = []
         if options.generate_diagrams:
             tasks.append(
@@ -189,6 +210,7 @@ class ResearchAnalyser:
         # 9. Generate STORM Wikipedia-style report (if requested)
         if options.generate_storm_report and self.config.storm.enabled:
             try:
+                _progress("🌪️  Generating STORM Wikipedia report…")
                 logger.info("Generating STORM report...")
                 # STORMWikiRunner.run() makes blocking DSPy/litellm calls;
                 # run in a thread to keep the event loop free (Principle II).
@@ -206,6 +228,7 @@ class ResearchAnalyser:
         audio_path = None
         if options.generate_audio:
             try:
+                _progress("🎙️  Generating audio narration (TTS)…")
                 logger.info("Generating audio narration with Qwen3-TTS...")
                 audio_path = await self.tts_engine.synthesize(report, output_dir)
                 logger.info(f"Audio saved to: {audio_path}")

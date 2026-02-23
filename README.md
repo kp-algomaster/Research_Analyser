@@ -4,14 +4,14 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 
 ## Features
 
-- **PDF Upload & URL Input** — Upload PDFs or paste paper URLs (arXiv, Semantic Scholar, DOI links)
+- **PDF Upload & URL Input** — Upload PDFs, paste paper URLs (arXiv, Semantic Scholar, DOI), or type a local file path directly in the app window
 - **Intelligent OCR Extraction** — MonkeyOCR 1.5 extracts text, equations (LaTeX), tables, and figures with state-of-the-art accuracy
-- **AI Diagram Generation** — PaperBanana generates methodology diagrams, architecture overviews, and results plots using Gemini VLM + Imagen
+- **AI Diagram Generation** — PaperBanana (Retriever → Planner → Stylist → Visualizer → Critic pipeline) generates methodology diagrams, architecture overviews, and results plots using Gemini VLM + Imagen; configurable refinement iterations, auto-refine, and input optimisation
 - **Agentic Paper Review** — LangGraph 9-node workflow with ML-calibrated scoring (Soundness, Presentation, Contribution)
 - **STORM Wikipedia Report** — Stanford OVAL's knowledge-storm generates a cited Wikipedia-style article about the paper's topic, grounded in the paper's own extracted content
 - **PaperReview.ai Comparison** — Upload external review JSON from [PaperReview.ai](https://paperreview.ai) to compare scores against local review
-- **Configuration Page** — Dedicated settings page for API keys (Google, OpenAI, Tavily, HuggingFace), model selection (OCR variant, review LLM, diagram provider), STORM and TTS toggles, and output paths
-- **Audio Narration** — Qwen3-TTS reads your analysis report aloud as a downloadable WAV file
+- **Configuration Page** — Dedicated settings page for API keys (Google, OpenAI, Tavily, HuggingFace), model selection (OCR variant, review LLM, diagram provider + VLM/image model), PaperBanana refinement controls, STORM and TTS toggles, and output paths. PaperBanana installation status shown as a live badge.
+- **Audio Narration** — Qwen3-TTS reads your analysis report aloud as a downloadable WAV file; offline model download built into the app
 - **Structured Reports** — Markdown + HTML reports with key findings, equations, strengths/weaknesses, and visual summaries
 - **Cross-platform Desktop App** — Standalone native-window bundles for macOS (DMG), Windows (EXE), and Linux (AppImage / DEB) via PyInstaller + pywebview
 
@@ -43,8 +43,8 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 ### Prerequisites
 
 - Python 3.12 (recommended; 3.10+ supported)
-- CUDA-compatible GPU (for MonkeyOCR) or CPU fallback mode
-- API keys: Google Gemini (diagrams), OpenAI (review), Tavily (optional, related work search)
+- CUDA-compatible GPU (for MonkeyOCR) or Apple Silicon / CPU fallback mode
+- API keys: **Google Gemini** (required for PaperBanana diagrams), OpenAI (review), Tavily (optional, related work search)
 
 ### Installation
 
@@ -60,16 +60,28 @@ source .venv312/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Install MonkeyOCR and PaperBanana
-pip install monkeyocr paperbanana
+# Install MonkeyOCR
+pip install monkeyocr
+
+# Install PaperBanana — must be installed from GitHub (not on PyPI)
+git clone https://github.com/llmsresearch/paperbanana.git /tmp/paperbanana
+pip install -e '/tmp/paperbanana[dev,openai,google]'
+# or directly via pip git syntax:
+pip install 'paperbanana[dev,openai,google] @ git+https://github.com/llmsresearch/paperbanana.git'
 
 # Download MonkeyOCR model weights
 python -m monkeyocr.download --model MonkeyOCR-pro-3B
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your API keys (GOOGLE_API_KEY, OPENAI_API_KEY, etc.)
+# Edit .env with your API keys:
+#   GOOGLE_API_KEY=...   (required for PaperBanana diagram generation)
+#   OPENAI_API_KEY=...   (required for agentic peer review)
+#   TAVILY_API_KEY=...   (optional — enables related-work search during review)
+#   HF_TOKEN=...         (optional — required only for Qwen3-TTS download)
 ```
+
+> **PaperBanana note:** PaperBanana is **not published on PyPI**.  The `pip install paperbanana` command will not work.  Always install from the GitHub source using the command above.
 
 ### Run the Application
 
@@ -97,7 +109,8 @@ The app can be packaged as a self-contained native desktop application on all th
 > source .venv312/bin/activate          # macOS/Linux
 > .venv312\Scripts\Activate.ps1         # Windows (PowerShell)
 > pip install -r requirements.txt
-> pip install monkeyocr paperbanana
+> pip install monkeyocr
+> pip install 'paperbanana[dev,openai,google] @ git+https://github.com/llmsresearch/paperbanana.git'
 > python -m monkeyocr.download --model MonkeyOCR-pro-3B
 > ```
 
@@ -116,11 +129,27 @@ dist/ResearchAnalyser.app   # Standalone .app bundle
 dist/ResearchAnalyser.dmg   # Drag-and-drop disk image (~500 MB)
 ```
 
-**What it produces:** A native macOS `.app` using `WKWebView` via pywebview.  Outputs go to `~/ResearchAnalyserOutput/`.  Launcher log at `~/ResearchAnalyserOutput/launcher.log`.
+**What it produces:** A native macOS `.app` using `WKWebView` via pywebview.  The launcher is a lightweight ~153 MB bundle — all heavy ML dependencies (torch, MonkeyOCR, PaperBanana, …) are installed on first launch into `~/.researchanalyser/venv` and reused on subsequent launches.  Outputs go to `~/ResearchAnalyserOutput/`.  Launcher log at `~/ResearchAnalyserOutput/launcher.log`.
 
 **Install:** Open `ResearchAnalyser.dmg`, drag the app to `/Applications`.
 
-> **First launch:** macOS Gatekeeper may block an unsigned app.  Right-click → Open, then confirm.
+**API keys (required for diagram generation):**
+
+The DMG app reads API keys from `~/.researchanalyser/.env` — create this file once:
+
+```bash
+mkdir -p ~/.researchanalyser
+cat > ~/.researchanalyser/.env << 'EOF'
+GOOGLE_API_KEY=your_google_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+TAVILY_API_KEY=your_tavily_key_here
+HF_TOKEN=your_huggingface_token_here
+EOF
+```
+
+Keys can also be set per-session in the **Configuration** page of the app.
+
+> **First launch:** macOS Gatekeeper may block an unsigned app.  Right-click → Open, then confirm.  The first launch installs all ML dependencies (~5–15 min depending on network speed).
 
 ---
 
@@ -236,13 +265,13 @@ sudo apt install -f          # resolve any missing system dependencies
 
 ### Build artefact sizes (approximate)
 
-| Platform | Format | Size |
-|----------|--------|------|
-| macOS | `.dmg` | ~500 MB |
-| Windows | `.zip` | ~450 MB |
-| Linux | `.AppImage` | ~480 MB |
+| Platform | Format | Launcher size | After first-launch install |
+|----------|--------|--------------|---------------------------|
+| macOS | `.dmg` | ~153 MB | ~3–5 GB in `~/.researchanalyser/venv` |
+| Windows | `.zip` | ~450 MB | — |
+| Linux | `.AppImage` | ~480 MB | — |
 
-Sizes are large because PyTorch (MonkeyOCR) and the full LangChain stack are included in the bundle.
+The macOS DMG is kept small (~153 MB) because heavy ML dependencies (PyTorch, MonkeyOCR, PaperBanana) are installed on first launch into the companion venv rather than bundled.
 
 ---
 
@@ -274,8 +303,8 @@ The Streamlit UI has three pages (navigation in the left sidebar):
 
 | Page | What it does |
 |------|-------------|
-| **Analyse Paper** | Upload a PDF or enter an arXiv/DOI URL, choose per-run options (diagrams, review, audio, STORM), click **Analyse Paper** |
-| **Configuration** | Set API keys (Google, OpenAI, Tavily, HuggingFace), choose OCR model variant, review LLM, diagram provider, STORM/TTS toggles, and output paths — persisted for the session |
+| **Analyse Paper** | Upload a PDF, enter an arXiv/DOI URL, or paste a local file path. Choose per-run options (diagrams, peer review, audio narration, STORM report), select diagram types (Methodology / Architecture / Results), click **Analyse Paper** |
+| **Configuration** | Set API keys (Google, OpenAI, Tavily, HuggingFace); choose OCR variant, review LLM, diagram LLM provider, VLM model, image model; configure PaperBanana refinement iterations, auto-refine, and input optimisation; enable STORM / TTS; set output paths. PaperBanana installation status shown live. Keys persist to the session; for permanent storage use `~/.researchanalyser/.env`. |
 | **Server Management** | Start/stop the FastAPI backend, inspect connection status and device badges |
 
 ### Python API

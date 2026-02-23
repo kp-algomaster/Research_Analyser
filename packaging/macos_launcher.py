@@ -26,16 +26,19 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
 from pathlib import Path
 
 # ── Stable paths ──────────────────────────────────────────────────────────────
-_APP_SUPPORT  = Path.home() / ".researchanalyser"
-_VENV         = _APP_SUPPORT / "venv"
+_APP_SUPPORT    = Path.home() / ".researchanalyser"
+_VENV           = _APP_SUPPORT / "venv"
 # Bump the suffix to force a reinstall after major dependency changes.
-_SETUP_MARKER = _APP_SUPPORT / ".setup_v1_complete"
-_OUTPUT_DIR   = Path.home() / "ResearchAnalyserOutput"
+_SETUP_MARKER   = _APP_SUPPORT / ".setup_v2_complete"
+_OUTPUT_DIR     = Path.home() / "ResearchAnalyserOutput"
+# Extracted standalone Python 3.12 (from the bundled tarball in the .app).
+_BUNDLED_PYTHON = _APP_SUPPORT / "python312"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -79,6 +82,48 @@ def _clean_env() -> dict:
             if not k.startswith("DYLD_")}
 
 
+def _extract_bundled_python() -> str | None:
+    """Extract the python-build-standalone tarball bundled in the .app.
+
+    The tarball (python312.tar.gz) is added to the bundle at build time via
+    PyInstaller --add-data.  Its internal structure is:
+        python/
+          bin/python3.12
+          lib/…
+          …
+
+    We extract once to ~/.researchanalyser/python312/ and return the path to
+    the python3.12 binary.  Subsequent calls are instant (directory exists).
+    """
+    tarball = resource_path("python312.tar.gz")
+    if not tarball.exists():
+        log.warning("Bundled Python tarball not found at %s — will try system Python", tarball)
+        return None
+
+    py_bin = _BUNDLED_PYTHON / "python" / "bin" / "python3.12"
+    if py_bin.exists():
+        log.info("Bundled Python already extracted: %s", py_bin)
+        return str(py_bin)
+
+    log.info("Extracting bundled Python 3.12 to %s …", _BUNDLED_PYTHON)
+    _BUNDLED_PYTHON.mkdir(parents=True, exist_ok=True)
+    try:
+        with tarfile.open(tarball, "r:gz") as tf:
+            tf.extractall(_BUNDLED_PYTHON)
+    except Exception as exc:
+        log.error("Failed to extract bundled Python: %s", exc)
+        return None
+
+    if not py_bin.exists():
+        log.error("python3.12 binary not found after extraction (expected %s)", py_bin)
+        return None
+
+    # Ensure the binary is executable (should be preserved by tarfile, but be safe)
+    py_bin.chmod(0o755)
+    log.info("Bundled Python extracted successfully: %s", py_bin)
+    return str(py_bin)
+
+
 def _find_python() -> str | None:
     """Return the path to a Python 3.10+ interpreter.
 
@@ -88,6 +133,8 @@ def _find_python() -> str | None:
     stripped.
 
     Search order:
+    0. Bundled python-build-standalone Python 3.12 (always preferred — no
+       system dependency required at all).
     1. Absolute paths at all known Homebrew/installer locations (fast).
     2. Login shell (zsh -l) — loads ~/.zprofile so non-standard installs
        (pyenv, conda, custom prefix) are found via the user's PATH.
@@ -108,6 +155,12 @@ def _find_python() -> str | None:
         except Exception as exc:
             log.debug("_verify %s raised: %s", path, exc)
             return False
+
+    # ── 0. Bundled Python (no system dependency required) ────────────────────
+    bundled = _extract_bundled_python()
+    if bundled and _verify(bundled):
+        log.info("Using bundled Python 3.12: %s", bundled)
+        return bundled
 
     # ── 1. Absolute paths (fastest, covers 99% of macOS installs) ────────────
     candidates = [
@@ -194,6 +247,13 @@ _PACKAGES = [
     ("click", ["install", "click>=8.1"]),
     ("tqdm", ["install", "tqdm>=4.65"]),
     ("Pillow", ["install", "Pillow>=10.0"]),
+    ("matplotlib", ["install", "matplotlib>=3.8"]),
+    ("soundfile", ["install", "soundfile>=0.12"]),
+    ("google-genai", ["install", "google-genai>=1.0"]),
+    ("paperbanana", ["install", "paperbanana[dev,openai,google] @ git+https://github.com/llmsresearch/paperbanana.git"]),
+    ("huggingface_hub", ["install", "huggingface-hub>=0.23"]),
+    ("transformers", ["install", "transformers>=4.40"]),
+    ("accelerate", ["install", "accelerate>=0.30"]),
     ("PyMuPDF", ["install", "PyMuPDF>=1.23"]),
     ("streamlit", ["install", "streamlit>=1.30"]),
     ("altair", ["install", "altair>=5"]),
@@ -283,6 +343,34 @@ function showError(msg){
 
 # ── Core logic ────────────────────────────────────────────────────────────────
 
+def _inject_dotenv(env: dict, dotenv_path: Path) -> None:
+    """Read KEY=VALUE pairs from a .env file and merge into env (no-override).
+
+    Does not require python-dotenv — stdlib only.
+    Called from the PyInstaller launcher which has no heavy dependencies.
+    """
+    if not dotenv_path.exists():
+        return
+    try:
+        with open(dotenv_path) as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                # Strip optional surrounding quotes from value
+                val = val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                    val = val[1:-1]
+                # Only set if not already present (don't override real env vars)
+                if key and key not in env:
+                    env[key] = val
+        log.info("Loaded .env from %s", dotenv_path)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Failed to load .env from %s: %s", dotenv_path, exc)
+
+
 def _launch_streamlit(port: int, app_script: Path, config_file: Path) -> subprocess.Popen | None:
     """Start Streamlit from the companion venv; return the process or None."""
     python = _VENV / "bin" / "python"
@@ -298,7 +386,22 @@ def _launch_streamlit(port: int, app_script: Path, config_file: Path) -> subproc
         "RESEARCH_ANALYSER_APP__OUTPUT_DIR": str(_OUTPUT_DIR),
         "RESEARCH_ANALYSER_APP__TEMP_DIR": str(_OUTPUT_DIR / "tmp"),
         "STREAMLIT_GLOBAL_DEVELOPMENT_MODE": "false",
+        # Dark theme — mirrors .streamlit/config.toml which Streamlit's subprocess
+        # cannot find inside the frozen .app bundle.
+        "STREAMLIT_THEME_BASE":                     "dark",
+        "STREAMLIT_THEME_TEXT_COLOR":               "#ffffff",
+        "STREAMLIT_THEME_BACKGROUND_COLOR":          "#0d1117",
+        "STREAMLIT_THEME_SECONDARY_BACKGROUND_COLOR": "#161b22",
+        "STREAMLIT_THEME_PRIMARY_COLOR":             "#388bfd",
     }
+
+    # Load API keys from .env files — the Streamlit subprocess CWD is not the
+    # project dir when launched from Finder, so load_dotenv() inside app.py
+    # cannot reliably find the file.  Inject here at the process-env level so
+    # os.environ is pre-populated before app.py even runs.
+    _inject_dotenv(env, _APP_SUPPORT / ".env")        # ~/.researchanalyser/.env  (primary)
+    _inject_dotenv(env, Path.home() / ".env")          # ~/.env  (fallback)
+
     if config_file.exists():
         env["RESEARCH_ANALYSER_CONFIG"] = str(config_file)
 
@@ -318,6 +421,7 @@ def _launch_streamlit(port: int, app_script: Path, config_file: Path) -> subproc
 
 def _do_setup(window, port: int, app_script: Path, config_file: Path) -> None:
     """Run in a background thread: install deps, then launch Streamlit."""
+    window.evaluate_js('updateProgress(0,0,"Preparing Python environment…")')
     python = _find_python()
     if not python:
         msg = ("Python 3.10+ not found. "
@@ -371,6 +475,17 @@ def _finish_launch(window, port: int, app_script: Path, config_file: Path) -> No
 
     log.info("Streamlit ready — loading UI")
     window.title = "Research Analyser"
+    # Expand to a full working size then maximize.
+    # resize() first so there's a sensible fallback if maximize() isn't
+    # available on the installed pywebview version.
+    try:
+        window.resize(1440, 900)
+    except Exception:
+        pass
+    try:
+        window.maximize()
+    except Exception:
+        pass
     window.load_url(f"http://localhost:{port}")
 
 
@@ -400,7 +515,7 @@ def main() -> int:
             "Research Analyser — First-time Setup",
             html=_SETUP_HTML,
             width=620, height=520,
-            resizable=False,
+            resizable=True,
         )
         webview.start(
             lambda: _do_setup(window, port, app_script, config_file),

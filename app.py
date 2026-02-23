@@ -9,6 +9,25 @@ import sys
 import urllib.request
 from pathlib import Path
 
+# Load .env before anything else so GOOGLE_API_KEY etc. are available.
+# When running inside the macOS .app bundle the CWD is not the project dir,
+# so explicitly check the companion app-support dir first.
+try:
+    from dotenv import load_dotenv
+    from pathlib import Path as _Path
+    _dotenv_candidates = [
+        _Path.home() / ".researchanalyser" / ".env",  # DMG install (primary)
+        _Path.home() / ".env",                         # home dir fallback
+        _Path(__file__).resolve().parent / ".env",     # project root (dev mode)
+    ]
+    for _dp in _dotenv_candidates:
+        if _dp.exists():
+            load_dotenv(_dp, override=False)
+    # Also let load_dotenv search from CWD upwards as a final catch-all
+    load_dotenv(override=False)
+except ImportError:
+    pass
+
 import streamlit as st
 
 from research_analyser.config import Config
@@ -135,7 +154,7 @@ st.markdown("""
 }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
-    color: #c9d1d9 !important; font-size: 13px !important;
+    color: #e6edf3 !important; font-size: 13px !important;
     font-weight: 500 !important; padding: 10px 20px !important;
     border-radius: 0 !important;
     border-bottom: 2px solid transparent !important;
@@ -161,7 +180,7 @@ st.markdown("""
     border-radius: 10px !important; padding: 14px 18px !important;
 }
 [data-testid="stMetricValue"] { font-size: 26px !important; color: #f0f6fc !important; font-weight: 800 !important; }
-[data-testid="stMetricLabel"] { color: #8b949e !important; font-size: 11px !important; font-weight: 600 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; }
+[data-testid="stMetricLabel"] { color: #e6edf3 !important; font-size: 11px !important; font-weight: 600 !important; text-transform: uppercase !important; letter-spacing: 0.06em !important; }
 
 /* ── Buttons ── */
 .stButton > button[kind="primary"] {
@@ -215,6 +234,20 @@ st.markdown("""
     color: #c9d1d9 !important; font-size: 13px !important;
 }
 [data-testid="stExpander"] > details > summary:hover { color: #f0f6fc !important; }
+/* Expander body text — nuclear wildcard on the body-only node */
+[data-testid="stExpanderDetails"] *,
+[data-testid="stExpander"] details > div * {
+    color: #ffffff !important;
+}
+/* Keep expander header readable (not the body) */
+[data-testid="stExpander"] > details > summary,
+[data-testid="stExpander"] > details > summary * {
+    color: #c9d1d9 !important;
+}
+[data-testid="stExpander"] > details > summary:hover,
+[data-testid="stExpander"] > details > summary:hover * {
+    color: #f0f6fc !important;
+}
 
 /* ── Progress bars ── */
 .stProgress > div > div > div > div {
@@ -229,7 +262,7 @@ hr { border-color: #21262d !important; margin: 20px 0 !important; }
 [data-testid="stAlert"] { border-radius: 10px !important; border-left-width: 3px !important; }
 
 /* ── Checkboxes / toggles ── */
-.stCheckbox > label, .stToggle > label { font-size: 13.5px !important; color: #c9d1d9 !important; font-weight: 500 !important; }
+.stCheckbox > label, .stToggle > label { font-size: 13.5px !important; color: #e6edf3 !important; font-weight: 500 !important; }
 .stCheckbox > label:hover, .stToggle > label:hover { color: #f0f6fc !important; }
 
 /* ── Pills (st.pills diagram type chips) ── */
@@ -554,7 +587,7 @@ def show_server_management() -> None:
 # ── Page: Configuration ───────────────────────────────────────────────────────
 
 def show_configuration() -> None:
-    st.markdown('<div class="hero"><p class="hero-title">Configuration</p><p class="hero-sub">Settings persist for the current session. Set env vars in .env for persistence across restarts.</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><p class="hero-title">Configuration</p><p class="hero-sub">Settings persist for the current session. For persistence across restarts, put your API keys in <code>~/.researchanalyser/.env</code> (e.g. <code>GOOGLE_API_KEY=…</code>).</p></div>', unsafe_allow_html=True)
 
     col_a, col_b = st.columns(2, gap="medium")
 
@@ -612,10 +645,41 @@ def show_configuration() -> None:
         # Diagrams
         with st.container(border=True):
             st.markdown('<div class="cfg-hdr"><div class="cfg-icon cfg-icon-diag">🎨</div>Diagram Generation</div>', unsafe_allow_html=True)
+
+            # ── PaperBanana installation status ────────────────────────────
+            try:
+                import paperbanana as _pb  # noqa
+                _pb_version = getattr(_pb, "__version__", "")
+                _pb_label = f"PaperBanana {_pb_version}".strip()
+                _pb_ok = True
+            except ImportError:
+                _pb_ok = False
+                _pb_label = "PaperBanana not installed"
+
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">'
+                f'  <span style="font-size:12px;color:#8b949e;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Engine</span>'
+                f'  <span class="badge {"badge-green" if _pb_ok else "badge-gray"}">'
+                f'    {"✓" if _pb_ok else "✗"} {_pb_label}'
+                f'  </span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            if not _pb_ok:
+                st.warning(
+                    "**PaperBanana is not installed** — diagrams will fall back to matplotlib.\n\n"
+                    "Install once inside the app's companion venv:\n"
+                    "```\npip install 'paperbanana[dev,openai,google] @ "
+                    "git+https://github.com/llmsresearch/paperbanana.git'\n```\n"
+                    "Then restart the app. The installer will do this automatically on next launch."
+                )
+
             c1, c2 = st.columns(2)
             st.session_state["cfg_diagram_provider"] = c1.selectbox(
-                "Provider", ["gemini", "openrouter"],
+                "LLM Provider", ["gemini", "openrouter"],
                 index=["gemini", "openrouter"].index(_cfg("diagram_provider", "gemini")),
+                help="Provider PaperBanana uses for vision-language planning",
             )
             st.session_state["cfg_vlm_model"] = c2.text_input(
                 "VLM model", value=_cfg("vlm_model", "gemini-2.0-flash"),
@@ -623,7 +687,21 @@ def show_configuration() -> None:
             )
             st.session_state["cfg_image_model"] = st.text_input(
                 "Image model", value=_cfg("image_model", "gemini-3-pro-image-preview"),
-                help="Image generation model",
+                help="Google image model used by PaperBanana (e.g. gemini-3-pro-image-preview · gemini-2.5-flash-image · imagen-4.0-fast-generate-001)",
+            )
+            c3, c4, c5 = st.columns(3)
+            st.session_state["cfg_max_iterations"] = c3.number_input(
+                "Refinement iterations", min_value=1, max_value=10,
+                value=int(_cfg("max_iterations", 3)),
+                help="PaperBanana Critic–Visualizer cycles (more = better quality, slower)",
+            )
+            st.session_state["cfg_auto_refine"] = c4.toggle(
+                "Auto-refine", value=_cfg("auto_refine", True),
+                help="Let PaperBanana's Critic agent request revisions automatically",
+            )
+            st.session_state["cfg_optimize_inputs"] = c5.toggle(
+                "Optimize inputs", value=_cfg("optimize_inputs", True),
+                help="Retriever stage selects best reference examples for planning",
             )
 
         # STORM
@@ -654,6 +732,69 @@ def show_configuration() -> None:
                 "Enable Qwen3-TTS narration", value=_cfg("tts_enabled", False),
                 help="Requires HF_TOKEN · outputs analysis_audio.wav",
             )
+
+            # ── Model cache status & download ──────────────────────────────
+            _TTS_MODEL_ID = "Qwen/Qwen3-TTS"
+            _hf_cache = Path(
+                os.environ.get("HUGGINGFACE_HUB_CACHE",
+                               os.environ.get("HF_HOME",
+                                              str(Path.home() / ".cache" / "huggingface" / "hub")))
+            )
+            _model_cache_dir = _hf_cache / ("models--" + _TTS_MODEL_ID.replace("/", "--"))
+            _model_cached = _model_cache_dir.exists() and any(_model_cache_dir.rglob("*.safetensors"))
+
+            if _model_cached:
+                st.success("✓ Qwen3-TTS model cached locally — no download needed")
+            else:
+                st.info("Qwen3-TTS not yet downloaded (~3 GB). Download once for offline use.")
+
+            _dl_col1, _dl_col2 = st.columns([3, 1])
+            _force_dl = _dl_col2.checkbox("Force re-download", key="tts_force_dl",
+                                          disabled=not _model_cached)
+            if _dl_col1.button(
+                "⬇  Download Qwen3-TTS Model" if not _model_cached else "⬇  Re-download Qwen3-TTS Model",
+                disabled=_model_cached and not _force_dl,
+                use_container_width=True,
+                key="btn_dl_tts",
+            ):
+                _hf_token = _cfg("hf_token", os.environ.get("HF_TOKEN", ""))
+                if not _hf_token:
+                    st.error("Set a HuggingFace Token in the API Keys section first.")
+                else:
+                    try:
+                        from huggingface_hub import snapshot_download  # type: ignore
+                    except ImportError:
+                        st.error(
+                            "`huggingface_hub` not installed. "
+                            "Run: pip install huggingface-hub"
+                        )
+                        snapshot_download = None  # type: ignore
+
+                    if snapshot_download is not None:
+                        with st.status(
+                            f"Downloading {_TTS_MODEL_ID} (~3 GB)…",
+                            expanded=True,
+                        ) as _dl_status:
+                            st.write("Connecting to HuggingFace Hub…")
+                            try:
+                                snapshot_download(
+                                    repo_id=_TTS_MODEL_ID,
+                                    token=_hf_token,
+                                    ignore_patterns=["*.msgpack", "*.h5", "flax_model*"],
+                                )
+                                _dl_status.update(
+                                    label="✓ Download complete — model cached locally",
+                                    state="complete",
+                                    expanded=False,
+                                )
+                                st.rerun()
+                            except Exception as _dl_err:
+                                _dl_status.update(
+                                    label=f"Download failed: {_dl_err}",
+                                    state="error",
+                                    expanded=True,
+                                )
+                                st.error(str(_dl_err))
 
         # Paths
         with st.container(border=True):
@@ -711,6 +852,24 @@ for _label, _key in _NAV:
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 st.sidebar.caption("Outputs → `~/ResearchAnalyserOutput/`")
 
+# ── Sidebar: PaperBanana quick-status ─────────────────────────────────────────
+try:
+    import paperbanana as _pb_chk  # noqa
+    _pb_ver = getattr(_pb_chk, "__version__", "")
+    st.sidebar.markdown(
+        f'<div style="margin-top:8px">'
+        f'<span style="font-size:11px;color:#3fb950">● PaperBanana {_pb_ver} ready</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+except ImportError:
+    st.sidebar.markdown(
+        '<div style="margin-top:8px">'
+        '<span style="font-size:11px;color:#f85149">● PaperBanana not installed</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
 _page = st.session_state["nav_page"]
 if _page == "server":
     show_server_management()
@@ -757,37 +916,64 @@ with st.container(border=True):
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 st.markdown('<p class="sec-label">Input</p>', unsafe_allow_html=True)
-input_tab1, input_tab2 = st.tabs(["  📎  Upload PDF  ", "  🔗  URL / arXiv / DOI  "])
 
 source = None
 uploaded_file = None
 
-with input_tab1:
-    uploaded_file = st.file_uploader(
-        "Drag and drop a PDF, or click to browse",
-        type=["pdf"],
-        label_visibility="visible",
-    )
-    if uploaded_file:
-        st.success(f"✓  {uploaded_file.name}  ·  {uploaded_file.size / 1024:.0f} KB")
+# Wrap inputs + button in a form so pressing Enter in the URL field
+# submits immediately — no need for a separate button click.
+with st.form("analysis_form", border=False):
+    input_tab1, input_tab2 = st.tabs(["  📎  Upload PDF  ", "  🔗  URL / arXiv / DOI  "])
 
-with input_tab2:
-    url_input = st.text_input(
-        "Paper URL, arXiv ID, or DOI",
-        placeholder="https://arxiv.org/abs/2401.12345  ·  2401.12345  ·  10.1145/...",
-        label_visibility="collapsed",
-    )
-    if url_input:
-        source = url_input
-        st.caption(f"Will fetch: {url_input}")
+    with input_tab1:
+        uploaded_file = st.file_uploader(
+            "Drag and drop a PDF, or click to browse",
+            type=["pdf"],
+            label_visibility="visible",
+        )
+        if uploaded_file:
+            st.success(f"✓  {uploaded_file.name}  ·  {uploaded_file.size / 1024:.0f} KB")
 
-st.markdown("<br>", unsafe_allow_html=True)
-run_clicked = st.button("🔬  Analyse Paper", type="primary", use_container_width=True)
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:8px;margin:8px 0'>"
+            "<div style='flex:1;height:1px;background:#21262d'></div>"
+            "<span style='color:#8b949e;font-size:12px'>or paste file path</span>"
+            "<div style='flex:1;height:1px;background:#21262d'></div></div>",
+            unsafe_allow_html=True,
+        )
+        pdf_path_input = st.text_input(
+            "PDF file path",
+            placeholder="/Users/you/papers/my_paper.pdf",
+            label_visibility="collapsed",
+            key="pdf_path_input",
+            help="Type or paste the full path to a PDF on your Mac — useful inside the app window",
+        )
+        if pdf_path_input:
+            _pp = Path(pdf_path_input.strip())
+            if _pp.exists() and _pp.suffix.lower() == ".pdf":
+                st.success(f"✓  {_pp.name}  ·  {_pp.stat().st_size / 1024:.0f} KB")
+            elif pdf_path_input.strip():
+                st.warning("File not found or not a PDF — check the path")
+
+    with input_tab2:
+        url_input = st.text_input(
+            "Paper URL, arXiv ID, or DOI",
+            placeholder="https://arxiv.org/abs/2401.12345  ·  2401.12345  ·  10.1145/...",
+            label_visibility="collapsed",
+        )
+        if url_input:
+            source = url_input
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    run_clicked = st.form_submit_button(
+        "🔬  Analyse Paper", type="primary", use_container_width=True
+    )
 
 # ── Run analysis ──────────────────────────────────────────────────────────────
 if run_clicked:
-    if not source and not uploaded_file:
-        st.error("Please upload a PDF or enter a paper URL.")
+    _has_path_input = bool(st.session_state.get("pdf_path_input", "").strip())
+    if not source and not uploaded_file and not _has_path_input:
+        st.error("Please upload a PDF, enter a paper URL, or paste a PDF file path.")
     else:
         google_api_key = _cfg("google_key",  os.environ.get("GOOGLE_API_KEY", ""))
         openai_api_key = _cfg("openai_key",  os.environ.get("OPENAI_API_KEY", ""))
@@ -808,8 +994,12 @@ if run_clicked:
         config = Config.load()
         config.app.output_dir     = output_dir
         config.app.temp_dir       = temp_dir
-        config.diagrams.provider  = _cfg("diagram_provider", "gemini")
-        config.diagrams.vlm_model = _cfg("vlm_model", "gemini-2.0-flash")
+        config.diagrams.provider         = _cfg("diagram_provider", "gemini")
+        config.diagrams.vlm_model        = _cfg("vlm_model", "gemini-2.0-flash")
+        config.diagrams.image_model      = _cfg("image_model", "gemini-3-pro-image-preview")
+        config.diagrams.max_iterations   = int(_cfg("max_iterations", 3))
+        config.diagrams.auto_refine      = _cfg("auto_refine", True)
+        config.diagrams.optimize_inputs  = _cfg("optimize_inputs", True)
         config.ocr.model          = _cfg("ocr_model", "MonkeyOCR-pro-3B")
         config.ocr.device         = _cfg("ocr_device", "auto")
         config.review.model       = _cfg("review_model", "gpt-4o")
@@ -841,13 +1031,32 @@ if run_clicked:
             file_path = tmp_path / uploaded_file.name
             file_path.write_bytes(uploaded_file.read())
             source = str(file_path)
+        elif not source:
+            # Path text input fallback (reliable inside pywebview app window)
+            _ppi = st.session_state.get("pdf_path_input", "").strip()
+            if _ppi:
+                _ppi_path = Path(_ppi)
+                if _ppi_path.exists() and _ppi_path.suffix.lower() == ".pdf":
+                    source = str(_ppi_path)
+                else:
+                    st.error("PDF path not found or not a PDF file.")
+                    st.stop()
 
-        with st.spinner("Analysing paper…"):
+        with st.status("Analysing paper…", expanded=True) as _status:
             try:
-                report = asyncio.run(analyser.analyse(source, options=options))
+                def _on_progress(msg: str) -> None:
+                    _status.write(msg)
+
+                report = asyncio.run(
+                    analyser.analyse(source, options=options, on_progress=_on_progress)
+                )
                 st.session_state["last_report"] = report
                 st.session_state["last_output_dir"] = output_dir
+                st.session_state["last_generate_audio"] = generate_audio
+                st.session_state["last_generate_storm"] = generate_storm
+                _status.update(label="✓  Analysis complete!", state="complete", expanded=False)
             except Exception as e:
+                _status.update(label="Analysis failed", state="error")
                 st.error(f"Analysis failed: {e}")
                 st.exception(e)
                 st.stop()
@@ -880,11 +1089,16 @@ if report:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Result tabs
+    # Use the options that were active when analysis ran (persisted in session state)
+    _gen_audio = st.session_state.get("last_generate_audio", generate_audio)
+    _gen_storm = st.session_state.get("last_generate_storm", generate_storm)
+
+    # Result tabs — always add Audio/STORM tabs when they were requested so the
+    # user sees an error message rather than the tab silently not appearing.
     tab_labels = ["📝 Summary", "🧐 Peer Review", "∑ Equations", "🎨 Diagrams", "⬇ Downloads"]
-    if generate_audio:
+    if _gen_audio:
         tab_labels.append("🎙️ Audio")
-    if generate_storm and report.storm_report:
+    if _gen_storm:
         tab_labels.append("🌪️ STORM")
 
     tabs = st.tabs(tab_labels)
@@ -981,17 +1195,40 @@ if report:
     with tabs[tab_idx]:
         tab_idx += 1
         if report.diagrams:
+            # Banner if any diagram fell back to matplotlib
+            _fallbacks = [d for d in report.diagrams if getattr(d, "is_fallback", False)]
+            if _fallbacks:
+                st.warning(
+                    f"**{len(_fallbacks)} of {len(report.diagrams)} diagram(s) used the matplotlib fallback** "
+                    "— PaperBanana failed. See the error details below each diagram.",
+                    icon="⚠️",
+                )
+
             cols = st.columns(min(len(report.diagrams), 2), gap="medium")
             for i, diagram in enumerate(report.diagrams):
                 with cols[i % 2]:
+                    _is_fb = getattr(diagram, "is_fallback", False)
+                    _badge = (
+                        '<span class="badge badge-gray">matplotlib fallback</span>'
+                        if _is_fb else
+                        '<span class="badge badge-green">PaperBanana</span>'
+                    )
                     st.markdown(
-                        f'<span class="paper-chip">{diagram.diagram_type.title()}</span>',
+                        f'<span class="paper-chip">{diagram.diagram_type.title()}</span> {_badge}',
                         unsafe_allow_html=True,
                     )
                     if Path(diagram.image_path).exists():
                         st.image(diagram.image_path, caption=diagram.caption, use_container_width=True)
                     else:
                         st.info(f"Saved: `{diagram.image_path}`")
+
+                    # Error details when PaperBanana failed
+                    if _is_fb and getattr(diagram, "error", ""):
+                        with st.expander("PaperBanana error details"):
+                            st.code(diagram.error, language=None)
+                            if diagram.source_context:
+                                st.caption("Context sent to PaperBanana:")
+                                st.text(diagram.source_context[:800])
         else:
             st.info("No diagrams were generated for this run.")
 
@@ -1022,10 +1259,32 @@ if report:
                 mime="application/json",
                 use_container_width=True,
             )
+        # Optional audio + STORM downloads if they were generated
+        audio_file = Path(output_dir) / "analysis_audio.wav"
+        storm_file = Path(output_dir) / "storm_report.md"
+        if _gen_audio and audio_file.exists():
+            st.markdown("---")
+            with open(audio_file, "rb") as af:
+                st.download_button(
+                    "⬇  Audio Narration (WAV)",
+                    af.read(),
+                    file_name="analysis_audio.wav",
+                    mime="audio/wav",
+                    use_container_width=True,
+                )
+        if _gen_storm and storm_file.exists():
+            st.markdown("---")
+            st.download_button(
+                "⬇  STORM Report (Markdown)",
+                storm_file.read_text(encoding="utf-8"),
+                file_name="storm_report.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
         st.success(f"All outputs saved to: `{output_dir}`")
 
     # ── Audio tab ─────────────────────────────────────────────────────────────
-    if generate_audio and tab_idx < len(tabs):
+    if _gen_audio and tab_idx < len(tabs):
         with tabs[tab_idx]:
             tab_idx += 1
             audio_file = Path(output_dir) / "analysis_audio.wav"
@@ -1040,20 +1299,35 @@ if report:
                         use_container_width=True,
                     )
             else:
-                st.info("Audio file not found — check that TTS completed successfully.")
+                st.warning(
+                    "Audio narration was not generated. Common causes:\n"
+                    "- **HuggingFace Token** not set in Configuration\n"
+                    "- `soundfile` / `transformers` package missing\n"
+                    "- TTS model download failed\n\n"
+                    "Check the app logs for details."
+                )
 
     # ── STORM tab ─────────────────────────────────────────────────────────────
-    if generate_storm and report.storm_report and tab_idx < len(tabs):
+    if _gen_storm and tab_idx < len(tabs):
         with tabs[tab_idx]:
             tab_idx += 1
-            st.markdown(report.storm_report)
-            st.download_button(
-                "⬇  Download STORM Report (Markdown)",
-                report.storm_report,
-                file_name="storm_report.md",
-                mime="text/markdown",
-                use_container_width=True,
-            )
+            if report.storm_report:
+                st.markdown(report.storm_report)
+                st.download_button(
+                    "⬇  Download STORM Report (Markdown)",
+                    report.storm_report,
+                    file_name="storm_report.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
+            else:
+                st.warning(
+                    "STORM report was not generated. Common causes:\n"
+                    "- **OpenAI API Key** not set in Configuration\n"
+                    "- `knowledge-storm` or `dspy-ai` package missing\n\n"
+                    "Install with: `pip install knowledge-storm`\n\n"
+                    "Check the app logs for details."
+                )
 
 
 # ── PaperReview.ai Comparison ─────────────────────────────────────────────────
@@ -1137,3 +1411,34 @@ if ext_file is not None:
     except Exception as e:
         st.error(f"Comparison failed: {e}")
         st.exception(e)
+
+# ── Late CSS override (injected last so it beats Streamlit component CSS) ──────
+st.markdown("""
+<style>
+:root { --text-color: #ffffff !important; }
+.stApp, .stApp * { color: #ffffff; }
+/* Re-apply intentionally dim elements */
+[data-testid="stMetricLabel"]            { color: #e6edf3 !important; }
+[data-testid="stSidebar"] .stCaption p  { color: #8b949e !important; }
+.svc-url                                { color: #8b949e !important; }
+.score-denom                            { color: #8b949e !important; }
+[data-testid="stPills"] button          { color: #8b949e !important; }
+[data-testid="stPills"] button[aria-selected="true"],
+[data-testid="stPills"] button[aria-pressed="true"]  { color: #58a6ff !important; }
+[data-testid="stSidebar"] .stButton > button[kind="primary"] { color: #58a6ff !important; }
+.hero-title { color: transparent !important; }
+.sec-label  { color: #58a6ff !important; }
+.badge-green  { color: #3fb950 !important; }
+.badge-blue   { color: #58a6ff !important; }
+.badge-purple { color: #bc8cff !important; }
+.badge-gray   { color: #8b949e !important; }
+.dot-green { color: #3fb950 !important; }
+.dot-red   { color: #f85149 !important; }
+.dimbar-val  { color: #58a6ff !important; }
+.score-num   { color: #58a6ff !important; }
+.paper-chip  { color: #58a6ff !important; }
+.paper-meta  { color: #c9d1d9 !important; }
+.hero-sub    { color: #c9d1d9 !important; }
+.stTabs [aria-selected="true"] { color: #58a6ff !important; }
+</style>
+""", unsafe_allow_html=True)

@@ -14,6 +14,61 @@ python -m pip install --upgrade pip
 python -m pip install pyinstaller
 
 APP_NAME="ResearchAnalyser"
+
+# ── Bundle a self-contained Python 3.12 interpreter ───────────────────────────
+# We use python-build-standalone (indygreg) "install_only" tarballs.
+# They are fully self-contained: no system Python is required at all.
+# The tarball is bundled inside the .app via PyInstaller --add-data and
+# extracted by the launcher to ~/.researchanalyser/python312/ on first run.
+#
+# The download is cached in packaging/python_cache/ so rebuilds are fast.
+# ──────────────────────────────────────────────────────────────────────────────
+ARCH=$(uname -m)
+if [[ "$ARCH" == "arm64" ]]; then
+  PY_ARCH="aarch64-apple-darwin"
+else
+  PY_ARCH="x86_64-apple-darwin"
+fi
+
+PY_CACHE_DIR="packaging/python_cache"
+mkdir -p "$PY_CACHE_DIR"
+PY_CACHE="$PY_CACHE_DIR/python312_${ARCH}.tar.gz"
+
+if [[ ! -f "$PY_CACHE" ]]; then
+  echo "  Fetching latest python-build-standalone release info…"
+  # Query GitHub API for the latest release; extract the matching asset URL.
+  # Note: python3 -c uses a double-quoted shell string so ${PY_ARCH} expands.
+  RELEASE_JSON=$(curl -fsSL \
+    -H "User-Agent: research-analyser-build" \
+    -H "Accept: application/vnd.github.v3+json" \
+    "https://api.github.com/repos/indygreg/python-build-standalone/releases/latest")
+  PY_URL=$(echo "$RELEASE_JSON" | python3 -c "
+import sys, json
+raw = sys.stdin.read()
+data = json.JSONDecoder(strict=False).decode(raw)
+for a in data.get('assets', []):
+    n = a['name']
+    if ('cpython-3.12' in n and '${PY_ARCH}' in n
+            and 'install_only' in n and n.endswith('.tar.gz')):
+        print(a['browser_download_url'])
+        break
+")
+  if [[ -z "$PY_URL" ]]; then
+    echo "  ERROR: Could not find a Python 3.12 ${PY_ARCH} install_only asset." >&2
+    echo "         Check https://github.com/indygreg/python-build-standalone/releases" >&2
+    exit 1
+  fi
+  echo "  Downloading: $PY_URL"
+  curl -fL --progress-bar -o "$PY_CACHE" "$PY_URL"
+  echo "  Cached to: $PY_CACHE ($(du -sh "$PY_CACHE" | cut -f1))"
+else
+  echo "  Using cached Python 3.12 tarball: $PY_CACHE ($(du -sh "$PY_CACHE" | cut -f1))"
+fi
+
+# Symlink/copy into a predictable name that PyInstaller --add-data will pick up
+cp "$PY_CACHE" "packaging/python312.tar.gz"
+echo "  Bundled Python 3.12 ready."
+# (Cleaned up after PyInstaller below)
 DIST_DIR="dist"
 BUILD_DIR="build"
 
@@ -37,10 +92,15 @@ pyinstaller \
   --add-data "config.yaml:." \
   --add-data "monkeyocr.py:." \
   --add-data "research_analyser:research_analyser" \
+  --add-data ".streamlit:.streamlit" \
+  --add-data "packaging/python312.tar.gz:." \
   --collect-all webview \
   --hidden-import webview \
   --hidden-import webview.platforms.cocoa \
   packaging/macos_launcher.py
+
+# Clean up the staging copy (the cache stays in packaging/python_cache/)
+rm -f "packaging/python312.tar.gz"
 
 APP_PATH="$DIST_DIR/${APP_NAME}.app"
 TMP_DMG="$DIST_DIR/${APP_NAME}-tmp.dmg"
