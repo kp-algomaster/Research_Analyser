@@ -53,14 +53,17 @@ class DiagramGenerator:
         self.max_iterations = max_iterations
         self.output_format = output_format
         self.output_dir = Path(output_dir) if output_dir else Path("./output/diagrams")
-        self._pipeline = None
 
     # ── PaperBanana pipeline ───────────────────────────────────────────────────
 
-    def _load_pipeline(self) -> None:
-        if self._pipeline is not None:
-            return
+    def _make_pipeline(self, diagram_type: str):
+        """Create a fresh PaperBananaPipeline for each diagram call.
 
+        A fresh instance is required because PaperBanana assigns a single
+        run_id at __init__ time and writes all generate() outputs into the
+        same directory/filename.  Re-using one pipeline across concurrent
+        generate() calls causes the second result to overwrite the first.
+        """
         try:
             from paperbanana import PaperBananaPipeline
             from paperbanana.core.config import Settings
@@ -78,24 +81,25 @@ class DiagramGenerator:
                 "Add your Google API key in the Configuration page."
             )
 
+        # Give each diagram type its own subdirectory so concurrent runs
+        # never share an output path.
+        subdir = self.output_dir / diagram_type
+
         settings = Settings(
             vlm_provider=self.provider,
             vlm_model=self.vlm_model,
             image_provider="google_imagen",
             image_model=self.image_model,
             google_api_key=api_key,
-            output_dir=str(self.output_dir),
-            output_format=self.output_format,
-            optimize_inputs=self.optimize_inputs,
-            auto_refine=self.auto_refine,
+            output_dir=str(subdir),
             refinement_iterations=self.max_iterations,
         )
 
-        self._pipeline = PaperBananaPipeline(settings=settings)
         logger.info(
-            "PaperBanana pipeline loaded (vlm=%s, image=%s)",
-            self.vlm_model, self.image_model,
+            "PaperBanana pipeline created for '%s' (vlm=%s, image=%s)",
+            diagram_type, self.vlm_model, self.image_model,
         )
+        return PaperBananaPipeline(settings=settings)
 
     # ── Public generate API ────────────────────────────────────────────────────
 
@@ -191,11 +195,10 @@ class DiagramGenerator:
         try:
             from paperbanana import GenerationInput, DiagramType as PBDiagramType
 
-            self._load_pipeline()
-
+            pipeline = self._make_pipeline(diagram_type)
             pb_dtype = getattr(PBDiagramType, pb_diagram_type, PBDiagramType.METHODOLOGY)
 
-            result = await self._pipeline.generate(
+            result = await pipeline.generate(
                 GenerationInput(
                     source_context=context[:4000],
                     communicative_intent=communicative_intent,
@@ -203,7 +206,10 @@ class DiagramGenerator:
                 )
             )
 
-            # Copy PaperBanana's output to our standardised path
+            # Copy PaperBanana's output to our standardised path.
+            # result.image_path lives inside the per-type subdir created by
+            # _make_pipeline(); we copy it to the top-level output_dir so
+            # the rest of the app always finds it at a predictable location.
             src = Path(result.image_path)
             if src.exists():
                 shutil.copy2(src, output_path)
