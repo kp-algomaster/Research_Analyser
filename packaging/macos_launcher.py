@@ -67,30 +67,75 @@ def _find_free_port(start: int = 8502, end: int = 8600) -> int:
     return start
 
 
+def _clean_env() -> dict:
+    """Return os.environ without DYLD_* keys.
+
+    PyInstaller sets DYLD_LIBRARY_PATH / DYLD_FRAMEWORK_PATH to point at
+    bundled libraries.  When we spawn an external Python binary those vars
+    cause it to load the WRONG dylibs (from the .app bundle) and crash or
+    report the wrong version.  Strip them so subprocesses get a clean env.
+    """
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith("DYLD_")}
+
+
 def _find_python() -> str | None:
     """Return the path to a Python 3.10+ interpreter.
 
     macOS apps launched from Finder have a stripped PATH (/usr/bin:/bin only)
-    so shutil.which() can't find Homebrew Python directly.
+    so shutil.which() can't find Homebrew Python directly.  PyInstaller also
+    sets DYLD_LIBRARY_PATH which breaks external Python subprocesses unless
+    stripped.
 
     Search order:
-    1. Login shell (zsh -l / bash -l) — loads ~/.zprofile and ~/.zshrc so
-       Homebrew, pyenv, and other user-installed Pythons are visible.
-    2. Absolute paths covering all common macOS Python install locations.
+    1. Absolute paths at all known Homebrew/installer locations (fast).
+    2. Login shell (zsh -l) — loads ~/.zprofile so non-standard installs
+       (pyenv, conda, custom prefix) are found via the user's PATH.
     """
+    _env = _clean_env()
+
     def _verify(path: str) -> bool:
         """Return True if path is a Python 3.10+ executable."""
         try:
             r = subprocess.run(
                 [path, "-c",
                  "import sys; v=sys.version_info; print(v.major*10+v.minor)"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, timeout=10, env=_env,
             )
+            log.debug("_verify %s → rc=%s out=%r", path, r.returncode,
+                      r.stdout.strip())
             return r.returncode == 0 and int(r.stdout.strip()) >= 310
-        except Exception:
+        except Exception as exc:
+            log.debug("_verify %s raised: %s", path, exc)
             return False
 
-    # ── 1. Login shell — inherits user's full PATH ────────────────────────────
+    # ── 1. Absolute paths (fastest, covers 99% of macOS installs) ────────────
+    candidates = [
+        "/opt/homebrew/bin/python3.13",
+        "/opt/homebrew/bin/python3.12",
+        "/opt/homebrew/bin/python3.11",
+        "/opt/homebrew/bin/python3.10",
+        "/opt/homebrew/opt/python@3.13/bin/python3.13",
+        "/opt/homebrew/opt/python@3.12/bin/python3.12",
+        "/opt/homebrew/opt/python@3.11/bin/python3.11",
+        "/opt/homebrew/bin/python3",
+        "/usr/local/bin/python3.13",
+        "/usr/local/bin/python3.12",
+        "/usr/local/bin/python3.11",
+        "/usr/local/bin/python3",
+        "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+        "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+        "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
+        "/usr/bin/python3",
+    ]
+    for path in candidates:
+        log.debug("Checking absolute path: %s (exists=%s)", path,
+                  os.path.isfile(path))
+        if os.path.isfile(path) and _verify(path):
+            log.info("Found Python at absolute path: %s", path)
+            return path
+
+    # ── 2. Login shell fallback (pyenv / conda / custom prefix) ──────────────
     for shell in ("/bin/zsh", "/bin/bash"):
         if not os.path.isfile(shell):
             continue
@@ -99,36 +144,21 @@ def _find_python() -> str | None:
             try:
                 r = subprocess.run(
                     [shell, "-l", "-c", f"which {py_name}"],
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True, text=True, timeout=20, env=_env,
                 )
+                log.debug("shell which %s → rc=%s out=%r err=%r",
+                          py_name, r.returncode, r.stdout.strip(),
+                          r.stderr.strip()[:100])
                 path = r.stdout.strip().splitlines()[0] if r.returncode == 0 else ""
                 if path and os.path.isfile(path) and _verify(path):
                     log.info("Found Python via %s login shell: %s", shell, path)
                     return path
-            except Exception:
+            except Exception as exc:
+                log.debug("shell search %s/%s raised: %s", shell, py_name, exc)
                 continue
 
-    # ── 2. Absolute path fallback ─────────────────────────────────────────────
-    candidates = [
-        "/opt/homebrew/bin/python3.13",
-        "/opt/homebrew/bin/python3.12",
-        "/opt/homebrew/bin/python3.11",
-        "/opt/homebrew/bin/python3.10",
-        "/opt/homebrew/bin/python3",
-        "/opt/homebrew/opt/python@3.12/bin/python3.12",
-        "/opt/homebrew/opt/python@3.11/bin/python3.11",
-        "/usr/local/bin/python3.12",
-        "/usr/local/bin/python3.11",
-        "/usr/local/bin/python3",
-        "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
-        "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
-        "/usr/bin/python3",
-    ]
-    for path in candidates:
-        if os.path.isfile(path) and _verify(path):
-            log.info("Found Python at absolute path: %s", path)
-            return path
-
+    log.error("No Python 3.10+ found — checked %d absolute paths + login shell",
+              len(candidates))
     return None
 
 
