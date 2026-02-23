@@ -120,10 +120,13 @@ try:
                fill=(int(10 + t*8), int(13 + t*6), int(19 + t*11)))
 
     # ── Well geometry ─────────────────────────────────────────────────────────
-    R = 16                                   # corner radius
-    LX1, LY1, LX2, LY2 = 40,  45, 230, 240 # left well
-    RX1, RY1, RX2, RY2 = 310, 45, 500, 240 # right well
-    MID_Y = (LY1 + LY2) // 2               # 142 – vertical centre
+    # Icon top-left set to {85,75} and {355,75} in AppleScript (100 pt icons).
+    # Icon image: x+0..+100, y+0..+100.  Label (≈30 pt): y+104..+134.
+    # Wells add 18–22 pt padding on each side around that bounding box.
+    R = 14                                   # corner radius
+    LX1, LY1, LX2, LY2 = 62,  55, 212, 218 # left well  (150 × 163 pt)
+    RX1, RY1, RX2, RY2 = 332, 55, 482, 218 # right well (150 × 163 pt)
+    MID_Y = 128                              # vertical centre of icon image
 
     # Fake drop-shadow: darker rect offset by 2 px
     SHADOW = (6, 8, 12)
@@ -142,7 +145,7 @@ try:
         d.line([(bx1+R, by1+1), (bx2-R, by1+1)], fill=HILITE, width=1)
 
     # ── Arrow (shaft + head) ──────────────────────────────────────────────────
-    AX0, AX1 = LX2 + 18, RX1 - 18          # 248 → 292  (44 px gap each side)
+    AX0, AX1 = LX2 + 20, RX1 - 20          # gap on each side of the wells
     HEAD = 12                               # arrowhead length
     d.line([(AX0, MID_Y), (AX1 - HEAD, MID_Y)],
            fill=(52, 120, 230), width=2)
@@ -156,9 +159,9 @@ try:
     except Exception:
         f1 = f2 = None
     kw = lambda f: {'font': f} if f else {}
-    d.text((W//2, 262), 'Drag to Applications to install',
+    d.text((W//2, 248), 'Drag to Applications to install',
            fill=(155, 165, 178), anchor='mm', **kw(f1))
-    d.text((W//2, 279), 'Then open from your Applications folder',
+    d.text((W//2, 265), 'Then open from your Applications folder',
            fill=(65, 75, 92), anchor='mm', **kw(f2))
 
     img.save(bg)
