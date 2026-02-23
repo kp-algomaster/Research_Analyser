@@ -159,13 +159,47 @@ try:
         # 1-px inner highlight along the top edge
         d.line([(bx1+R, by1+1), (bx2-R, by1+1)], fill=HILITE, width=1)
 
-    # ── Arrow (shaft + head) ──────────────────────────────────────────────────
-    AX0, AX1 = LX2 + 20, RX1 - 20          # gap on each side of the wells
-    HEAD = 12                               # arrowhead length
-    d.line([(AX0, MID_Y), (AX1 - HEAD, MID_Y)],
-           fill=(52, 120, 230), width=2)
-    d.polygon([(AX1-HEAD, MID_Y-7), (AX1, MID_Y), (AX1-HEAD, MID_Y+7)],
-              fill=(80, 150, 255))
+    # ── Arrow: macOS Aqua liquid style ────────────────────────────────────────
+    AX0     = LX2 + 15           # shaft left edge
+    AX1     = RX1 - 15           # arrowhead tip
+    SR      = 5                  # shaft half-height  → 10 px tall pill
+    HL      = 24                 # arrowhead length
+    HH      = 15                 # arrowhead half-height
+    SX2     = AX1 - HL           # shaft / head join x
+
+    B_BASE  = (  0, 122, 255)    # macOS #007AFF system blue
+    B_DARK  = (  0,  80, 200)    # bottom shadow tint
+    B_LIGHT = ( 80, 170, 255)    # upper gradient highlight
+    B_SPEC  = (200, 230, 255)    # thin specular stripe
+    B_SHAD  = (185, 200, 220)    # drop-shadow colour
+
+    # 1. Soft drop-shadow (offset 2 px down)
+    d.rounded_rectangle([AX0+2, MID_Y-SR+2, SX2+2, MID_Y+SR+2],
+                        radius=SR, fill=B_SHAD)
+    d.polygon([(SX2+2, MID_Y-HH+2), (AX1+2, MID_Y+2), (SX2+2, MID_Y+HH+2)],
+              fill=B_SHAD)
+
+    # 2. Base fill — shaft pill + arrowhead
+    d.rounded_rectangle([AX0, MID_Y-SR, SX2, MID_Y+SR],
+                        radius=SR, fill=B_BASE)
+    d.polygon([(SX2, MID_Y-HH), (AX1, MID_Y), (SX2, MID_Y+HH)],
+              fill=B_BASE)
+
+    # 3. Bottom darker strip — deepen lower half for depth
+    d.rounded_rectangle([AX0+2, MID_Y+1, SX2-2, MID_Y+SR-1],
+                        radius=SR-2, fill=B_DARK)
+
+    # 4. Upper gradient tint — lighter top half
+    d.rounded_rectangle([AX0+2, MID_Y-SR+1, SX2-2, MID_Y-1],
+                        radius=SR-2, fill=B_LIGHT)
+
+    # 5. Specular highlight stripe — thin gloss band near very top
+    d.rounded_rectangle([AX0+6, MID_Y-SR+2, SX2-8, MID_Y-SR+4],
+                        radius=1, fill=B_SPEC)
+
+    # 6. Arrowhead upper highlight
+    d.polygon([(SX2+2, MID_Y-HH+3), (AX1-6, MID_Y-2), (SX2+2, MID_Y-2)],
+              fill=B_LIGHT)
 
     # ── Text ──────────────────────────────────────────────────────────────────
     try:
