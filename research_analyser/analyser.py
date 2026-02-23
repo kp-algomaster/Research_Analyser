@@ -240,27 +240,113 @@ class ResearchAnalyser:
         return report
 
     def _extract_methodology_summary(self, content) -> str:
-        """Extract methodology summary from sections."""
+        """Extract methodology summary from sections.
+
+        Strategy (in order):
+        1. Broad title keyword match
+        2. Content keyword match (look for "we propose", "algorithm", etc.)
+        3. Positional fallback: sections 1–4 (intro is usually section 0)
+        4. Full-text at offset 1000+ to skip the abstract area
+        """
+        abstract = (content.abstract or "").strip()
+
+        def _distinct(text: str) -> bool:
+            t = text.strip()
+            return bool(t) and t[:200] != abstract[:200]
+
+        METHOD_TITLE_KWS = [
+            "method", "approach", "proposed", "framework", "technique",
+            "model", "algorithm", "system", "design", "pipeline",
+            "architecture", "contribution", "formulation", "solution",
+            "overview", "our ",
+        ]
+        METHOD_CONTENT_KWS = [
+            "we propose", "we present", "our method", "our approach",
+            "the proposed", "algorithm", "architecture", "pipeline",
+            "formulation", "framework",
+        ]
+
+        # 1. Title keyword match
         for section in content.sections:
-            if any(
-                kw in section.title.lower()
-                for kw in ["method", "approach", "proposed", "framework"]
-            ):
-                return section.content[:500]
-        if content.abstract:
-            return content.abstract[:500]
-        return ""
+            if any(kw in section.title.lower() for kw in METHOD_TITLE_KWS):
+                text = section.content[:500].strip()
+                if _distinct(text):
+                    return text
+
+        # 2. Content keyword match
+        for section in content.sections:
+            if any(kw in section.content.lower() for kw in METHOD_CONTENT_KWS):
+                text = section.content[:500].strip()
+                if _distinct(text):
+                    return text
+
+        # 3. Positional fallback: skip section 0 (usually intro), try 1–4
+        if len(content.sections) > 1:
+            for sec in content.sections[1:5]:
+                text = sec.content[:500].strip()
+                if _distinct(text):
+                    return text
+
+        # 4. Full-text at offset (beyond abstract area)
+        if content.full_text and len(content.full_text) > 1000:
+            return content.full_text[1000:1500].strip()
+
+        return abstract[:500] if abstract else ""
 
     def _extract_results_summary(self, content) -> str:
-        """Extract results summary from sections."""
+        """Extract results summary from sections.
+
+        Strategy (in order):
+        1. Broad title keyword match
+        2. Content keyword match in the latter half of sections
+        3. Positional fallback: last few non-conclusion sections
+        4. Full-text from the latter portion of the paper
+        """
+        abstract = (content.abstract or "").strip()
+
+        def _distinct(text: str) -> bool:
+            t = text.strip()
+            return bool(t) and t[:200] != abstract[:200]
+
+        RESULTS_TITLE_KWS = [
+            "result", "experiment", "evaluation", "performance",
+            "benchmark", "comparison", "analysis", "ablation",
+            "finding", "quantitative", "accuracy", "discussion",
+        ]
+        RESULTS_CONTENT_KWS = [
+            "table", "accuracy", "f1", "precision", "recall",
+            "outperforms", "baseline", "state-of-the-art", "sota",
+            "improvement", "score", "metric", "% ",
+        ]
+
+        # 1. Title keyword match
         for section in content.sections:
-            if any(
-                kw in section.title.lower()
-                for kw in ["results", "experiments", "evaluation"]
-            ):
-                return section.content[:500]
-        if content.full_text:
-            return content.full_text[:500]
+            if any(kw in section.title.lower() for kw in RESULTS_TITLE_KWS):
+                text = section.content[:500].strip()
+                if _distinct(text):
+                    return text
+
+        # 2. Content keyword match in latter half
+        mid = max(0, len(content.sections) // 2)
+        for section in content.sections[mid:]:
+            if any(kw in section.content.lower() for kw in RESULTS_CONTENT_KWS):
+                text = section.content[:500].strip()
+                if _distinct(text):
+                    return text
+
+        # 3. Positional fallback: work backwards from second-to-last section
+        if len(content.sections) >= 3:
+            for sec in reversed(content.sections[:-1]):
+                text = sec.content[:500].strip()
+                if _distinct(text):
+                    return text
+
+        # 4. Full-text from latter portion
+        if content.full_text and len(content.full_text) > 2000:
+            return content.full_text[-1500:-1000].strip()
+        if content.full_text and len(content.full_text) > 500:
+            return content.full_text[-500:].strip()
+
         return ""
 
     def _extract_conclusions(self, content) -> str:
