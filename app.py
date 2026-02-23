@@ -35,27 +35,60 @@ st.markdown("""
     background: #161b22 !important;
     border-right: 1px solid #21262d !important;
 }
+[data-testid="stSidebar"] .stMarkdown h2,
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] .stMarkdown span {
+    color: #e6edf3 !important;
+}
 [data-testid="stSidebar"] .stMarkdown h2 {
-    font-size: 15px !important; font-weight: 700 !important;
-    color: #f0f6fc !important; margin: 0 !important;
+    font-size: 15px !important; font-weight: 700 !important; margin: 0 !important;
 }
 
 /* Nav radio → pill list */
 [data-testid="stSidebar"] .stRadio > label { display: none; }
 [data-testid="stSidebar"] .stRadio > div { gap: 3px !important; }
+
+/* Pill wrapper */
 [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label {
     display: flex !important; align-items: center !important;
     padding: 9px 14px !important; border-radius: 8px !important;
-    color: #adb8c4 !important; font-size: 13.5px !important;
     cursor: pointer !important; transition: all 0.15s !important;
-    font-weight: 500 !important;
+    background: transparent !important;
 }
 [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover {
-    background: #21262d !important; color: #f0f6fc !important;
+    background: #21262d !important;
 }
 [data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] {
-    background: #1f2d47 !important; color: #58a6ff !important;
+    background: #1f2d47 !important;
+}
+
+/* Nav text — target the <p> that Streamlit 1.5x renders inside label */
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label p,
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label span,
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label div {
+    color: #e6edf3 !important;
+    font-size: 14px !important;
     font-weight: 600 !important;
+    letter-spacing: 0.01em !important;
+}
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover p,
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover span,
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label:hover div {
+    color: #ffffff !important;
+}
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] p,
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] span,
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] > label[data-checked="true"] div {
+    color: #58a6ff !important;
+    font-weight: 700 !important;
+}
+
+/* Sidebar caption / footer text */
+[data-testid="stSidebar"] .stCaption p,
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] small {
+    color: #8b949e !important;
+    font-size: 12px !important;
 }
 
 /* ── Page hero ── */
