@@ -108,30 +108,62 @@ class DiagramGenerator:
         content: ExtractedContent,
         diagram_types: list[str] | None = None,
         auto_refine: bool = True,
+        on_progress: Optional[callable] = None,
     ) -> list[GeneratedDiagram]:
-        """Generate diagrams from extracted paper content."""
+        """Generate diagrams from extracted paper content.
+
+        Args:
+            on_progress: Optional ``fn(dtype: str, status: str)`` called
+                before and after each diagram so the caller can show live
+                status (e.g. "🔄 Generating…", "✓ Done", "✗ Failed").
+        """
         if diagram_types is None:
             diagram_types = ["methodology"]
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        tasks = []
-        for dtype in diagram_types:
-            match dtype:
-                case "methodology":
-                    tasks.append(self.generate_methodology(content))
-                case "architecture":
-                    tasks.append(self.generate_architecture(content))
-                case "results":
-                    tasks.append(self.generate_results_plot(content))
-                case _:
-                    logger.warning("Unknown diagram type: %s", dtype)
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        def _report(dtype: str, status: str) -> None:
+            if on_progress:
+                try:
+                    on_progress(dtype, status)
+                except Exception:
+                    pass
+
+        async def _run_one(dtype: str):
+            _report(dtype, "🔄 Generating…")
+            try:
+                match dtype:
+                    case "methodology":
+                        result = await self.generate_methodology(content)
+                    case "architecture":
+                        result = await self.generate_architecture(content)
+                    case "results":
+                        result = await self.generate_results_plot(content)
+                    case _:
+                        logger.warning("Unknown diagram type: %s", dtype)
+                        _report(dtype, "⚠️ Unknown type")
+                        return None
+                is_fb = getattr(result, "is_fallback", False)
+                _report(dtype, "✓ Done (fallback)" if is_fb else "✓ Done")
+                return result
+            except Exception as exc:
+                _report(dtype, "✗ Failed")
+                logger.error("Diagram generation failed for %s: %s", dtype, exc)
+                raise
+
+        # Mark all as queued upfront so the UI shows them immediately
+        for dtype in diagram_types:
+            _report(dtype, "⏳ Queued")
+
+        results = await asyncio.gather(
+            *[_run_one(dtype) for dtype in diagram_types],
+            return_exceptions=True,
+        )
         diagrams = []
         for result in results:
             if isinstance(result, Exception):
                 logger.error("Diagram generation failed: %s", result)
-            else:
+            elif result is not None:
                 diagrams.append(result)
         return diagrams
 

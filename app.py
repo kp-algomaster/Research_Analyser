@@ -1060,11 +1060,12 @@ if run_clicked:
         import threading as _threading
 
         _rs: dict = {
-            "progress": [],   # list of (pct: int, msg: str)
-            "partial":  None, # dict with content + extracted summaries after OCR
-            "report":   None, # final AnalysisReport when done
-            "error":    None, # traceback string on failure
-            "done":     False,
+            "progress":         [],   # list of (pct: int, msg: str)
+            "partial":          None, # dict with content + extracted summaries after OCR
+            "diagram_progress": {},   # dtype → status string (live PaperBanana stages)
+            "report":           None, # final AnalysisReport when done
+            "error":            None, # traceback string on failure
+            "done":             False,
         }
         st.session_state["_run_state"] = _rs
         st.session_state["_run_meta"]  = {
@@ -1121,7 +1122,11 @@ if run_clicked:
                 # Stage 3 — parallel: diagrams + peer review
                 _ptasks, _plabels = [], []
                 if _opts.generate_diagrams:
-                    _ptasks.append(_analyser.diagram_generator.generate(_cnt, _opts.diagram_types))
+                    def _on_diag_prog(dtype: str, status: str) -> None:
+                        _state["diagram_progress"][dtype] = status
+                    _ptasks.append(_analyser.diagram_generator.generate(
+                        _cnt, _opts.diagram_types, on_progress=_on_diag_prog
+                    ))
                     _plabels.append("diagrams")
                 if _opts.generate_review:
                     _ptasks.append(_analyser.reviewer.review(_cnt, _pi.target_venue))
@@ -1249,59 +1254,104 @@ if _bg is not None:
             _bm4.metric("References", len(_cnt.references))
             st.markdown("<br>", unsafe_allow_html=True)
 
-            _bp1, _bp2, _bp3 = st.columns(3, gap="medium")
             _pc_style = (
                 "background:#161b22;border:1px solid #21262d;border-radius:10px;"
                 "padding:14px 16px;height:100%"
             )
             _ph_style = "font-size:13px;font-weight:600;color:#8b949e;margin:0 0 8px 0"
             _pt_style = "font-size:13px;color:#c9d1d9;line-height:1.6;margin:0"
-            with _bp1:
-                st.markdown(
-                    f'<div style="{_pc_style}">'
-                    f'<p style="{_ph_style}">📖 Abstract</p>'
-                    f'<p style="{_pt_style}">{(_cnt.abstract[:500] if _cnt.abstract else "—")}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-            with _bp2:
-                st.markdown(
-                    f'<div style="{_pc_style}">'
-                    f'<p style="{_ph_style}">⚙️ Methodology</p>'
-                    f'<p style="{_pt_style}">{(_partial.get("methodology") or "—")}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-            with _bp3:
-                st.markdown(
-                    f'<div style="{_pc_style}">'
-                    f'<p style="{_ph_style}">📊 Results</p>'
-                    f'<p style="{_pt_style}">{(_partial.get("results_sum") or "—")}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
 
+            # ── Partial results tabs ──────────────────────────────────────────
+            _partial_tab_labels = ["📝 Summary"]
             _disp_eqs = [e for e in _cnt.equations if not e.is_inline]
             if _disp_eqs:
-                st.markdown('<p class="sec-label">Equations</p>', unsafe_allow_html=True)
-                for _eq in _disp_eqs[:10]:
-                    with st.expander(f"**{_eq.label or _eq.id}**  ·  {_eq.section}"):
-                        st.latex(_eq.latex)
-                        if _eq.description:
-                            st.caption(_eq.description)
+                _partial_tab_labels.append(f"∑ Equations ({len(_disp_eqs)})")
+            _ptabs = st.tabs(_partial_tab_labels)
 
-            _pi_items = []
-            if _bg_meta.get("generate_diagrams"):
-                _pi_items.append(("🎨 Diagrams",   "⏳  Generating diagrams…"))
-            if _bg_meta.get("generate_review"):
-                _pi_items.append(("🧐 Peer Review", "⏳  Peer review in progress…"))
-            if _pi_items:
+            with _ptabs[0]:  # Summary
+                _bp1, _bp2, _bp3 = st.columns(3, gap="medium")
+                with _bp1:
+                    st.markdown(
+                        f'<div style="{_pc_style}">'
+                        f'<p style="{_ph_style}">📖 Abstract</p>'
+                        f'<p style="{_pt_style}">{(_cnt.abstract[:500] if _cnt.abstract else "—")}</p>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                with _bp2:
+                    st.markdown(
+                        f'<div style="{_pc_style}">'
+                        f'<p style="{_ph_style}">⚙️ Methodology</p>'
+                        f'<p style="{_pt_style}">{(_partial.get("methodology") or "—")}</p>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                with _bp3:
+                    st.markdown(
+                        f'<div style="{_pc_style}">'
+                        f'<p style="{_ph_style}">📊 Results</p>'
+                        f'<p style="{_pt_style}">{(_partial.get("results_sum") or "—")}</p>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            if _disp_eqs:
+                with _ptabs[1]:  # Equations
+                    for _eq in _disp_eqs[:15]:
+                        with st.expander(f"**{_eq.label or _eq.id}**  ·  {_eq.section}"):
+                            st.latex(_eq.latex)
+                            if _eq.description:
+                                st.caption(_eq.description)
+
+            # ── In-progress cards: live diagram status + peer review ──────────
+            _has_dg = _bg_meta.get("generate_diagrams")
+            _has_rv = _bg_meta.get("generate_review")
+            if _has_dg or _has_rv:
                 st.markdown("<br>", unsafe_allow_html=True)
-                _pi_cols = st.columns(len(_pi_items), gap="medium")
-                for _col, (_lbl, _imsg) in zip(_pi_cols, _pi_items):
-                    with _col:
-                        with st.expander(_lbl, expanded=True):
-                            st.info(_imsg)
+                _pi_ncols = sum([bool(_has_dg), bool(_has_rv)])
+                _pi_col_list = st.columns(_pi_ncols, gap="medium")
+                _pi_col_idx = 0
+
+                if _has_dg:
+                    with _pi_col_list[_pi_col_idx]:
+                        _pi_col_idx += 1
+                        _dg_prog = _bg.get("diagram_progress", {})
+                        _rows = ""
+                        for _dtype, _dstatus in _dg_prog.items():
+                            if "✓" in _dstatus:
+                                _sc = "#3fb950"
+                            elif "✗" in _dstatus:
+                                _sc = "#f85149"
+                            elif "🔄" in _dstatus:
+                                _sc = "#58a6ff"
+                            else:
+                                _sc = "#8b949e"
+                            _rows += (
+                                f'<div style="display:flex;align-items:center;gap:8px;'
+                                f'margin:5px 0;font-size:13px">'
+                                f'<span style="color:{_sc}">{_dstatus}</span>'
+                                f'<span style="color:#c9d1d9">{_dtype.title()}</span>'
+                                f'</div>'
+                            )
+                        if not _rows:
+                            _rows = '<span style="color:#8b949e;font-size:13px">⏳ Queued…</span>'
+                        st.markdown(
+                            f'<div style="{_pc_style}">'
+                            f'<p style="{_ph_style}">🎨 PaperBanana Diagrams</p>'
+                            f'{_rows}'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                if _has_rv:
+                    with _pi_col_list[_pi_col_idx]:
+                        st.markdown(
+                            f'<div style="{_pc_style}">'
+                            f'<p style="{_ph_style}">🧐 Peer Review</p>'
+                            f'<span style="color:#8b949e;font-size:13px">⏳ In progress…</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
 
         # Poll every 0.75 s — only runs when user is on the Analyse Paper page
         _poll_time.sleep(0.75)
@@ -1355,7 +1405,7 @@ if report:
 
     # Result tabs — always add Audio/STORM tabs when they were requested so the
     # user sees an error message rather than the tab silently not appearing.
-    tab_labels = ["📝 Summary", "🧐 Peer Review", "∑ Equations", "🎨 Diagrams", "⬇ Downloads"]
+    tab_labels = ["📝 Summary", "∑ Equations", "🎨 Diagrams", "🧐 Peer Review", "⬇ Downloads"]
     if _gen_audio:
         tab_labels.append("🎙️ Audio")
     if _gen_storm:
@@ -1413,58 +1463,12 @@ if report:
                     st.markdown(f"**Evidence:** {kp.evidence}")
                     st.markdown(f'<span class="paper-chip">{kp.section}</span>', unsafe_allow_html=True)
 
-    # ── Peer Review tab ───────────────────────────────────────────────────────
-    with tabs[tab_idx]:
-        tab_idx += 1
-        if report.review:
-            from research_analyser.reviewer import interpret_score  # deferred
-            score    = report.review.overall_score
-            decision = interpret_score(score)
-
-            sc_col, dims_col = st.columns([1, 3], gap="large")
-
-            with sc_col:
-                st.markdown(
-                    f'<div class="score-block">'
-                    f'  <span class="score-num">{score:.1f}</span>'
-                    f'  <span class="score-denom">out of 10</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(_decision_pill(decision, score), unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.metric("Confidence", f"{report.review.confidence:.0f} / 5")
-
-            with dims_col:
-                st.markdown('<p class="sec-label">Dimensional Scores</p>', unsafe_allow_html=True)
-                bars_html = ""
-                for dim_name, dim in report.review.dimensions.items():
-                    bars_html += _dimbar(dim.name, dim.score)
-                st.markdown(bars_html, unsafe_allow_html=True)
-
-            sw1, sw2 = st.columns(2, gap="medium")
-            with sw1:
-                st.markdown('<p class="sec-label">Strengths</p>', unsafe_allow_html=True)
-                sw_html = ""
-                for s in report.review.strengths:
-                    sw_html += f'<div class="sw-row"><span class="sw-icon">✅</span>{s}</div>'
-                st.markdown(sw_html, unsafe_allow_html=True)
-            with sw2:
-                st.markdown('<p class="sec-label">Weaknesses</p>', unsafe_allow_html=True)
-                sw_html = ""
-                for w in report.review.weaknesses:
-                    sw_html += f'<div class="sw-row"><span class="sw-icon">⚠️</span>{w}</div>'
-                st.markdown(sw_html, unsafe_allow_html=True)
-        else:
-            st.info("Peer review was not requested for this run.")
-
     # ── Equations tab ─────────────────────────────────────────────────────────
     with tabs[tab_idx]:
         tab_idx += 1
         display_eqs = [e for e in report.extracted_content.equations if not e.is_inline]
         if display_eqs:
-            for eq in display_eqs[:10]:
+            for eq in display_eqs[:15]:
                 with st.expander(f"**{eq.label or eq.id}**  ·  {eq.section}"):
                     st.latex(eq.latex)
                     if eq.description:
@@ -1512,6 +1516,52 @@ if report:
                                 st.text(diagram.source_context[:800])
         else:
             st.info("No diagrams were generated for this run.")
+
+    # ── Peer Review tab ───────────────────────────────────────────────────────
+    with tabs[tab_idx]:
+        tab_idx += 1
+        if report.review:
+            from research_analyser.reviewer import interpret_score  # deferred
+            score    = report.review.overall_score
+            decision = interpret_score(score)
+
+            sc_col, dims_col = st.columns([1, 3], gap="large")
+
+            with sc_col:
+                st.markdown(
+                    f'<div class="score-block">'
+                    f'  <span class="score-num">{score:.1f}</span>'
+                    f'  <span class="score-denom">out of 10</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(_decision_pill(decision, score), unsafe_allow_html=True)
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.metric("Confidence", f"{report.review.confidence:.0f} / 5")
+
+            with dims_col:
+                st.markdown('<p class="sec-label">Dimensional Scores</p>', unsafe_allow_html=True)
+                bars_html = ""
+                for dim_name, dim in report.review.dimensions.items():
+                    bars_html += _dimbar(dim.name, dim.score)
+                st.markdown(bars_html, unsafe_allow_html=True)
+
+            sw1, sw2 = st.columns(2, gap="medium")
+            with sw1:
+                st.markdown('<p class="sec-label">Strengths</p>', unsafe_allow_html=True)
+                sw_html = ""
+                for s in report.review.strengths:
+                    sw_html += f'<div class="sw-row"><span class="sw-icon">✅</span>{s}</div>'
+                st.markdown(sw_html, unsafe_allow_html=True)
+            with sw2:
+                st.markdown('<p class="sec-label">Weaknesses</p>', unsafe_allow_html=True)
+                sw_html = ""
+                for w in report.review.weaknesses:
+                    sw_html += f'<div class="sw-row"><span class="sw-icon">⚠️</span>{w}</div>'
+                st.markdown(sw_html, unsafe_allow_html=True)
+        else:
+            st.info("Peer review was not requested for this run.")
 
     # ── Downloads tab ─────────────────────────────────────────────────────────
     with tabs[tab_idx]:
