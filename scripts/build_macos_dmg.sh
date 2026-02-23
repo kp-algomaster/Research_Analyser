@@ -159,8 +159,13 @@ hdiutil create \
   "$TMP_DMG"
 
 # Mount for Finder window / icon customisation
+# Capture the /dev/diskXsY device so we detach by device, not by mount-point
+# name (which can be ambiguous when stale mounts linger from earlier builds).
 MOUNT_DIR="/Volumes/$APP_NAME"
-hdiutil attach "$TMP_DMG" -readwrite -noverify -noautoopen -mountpoint "$MOUNT_DIR"
+ATTACH_OUT=$(hdiutil attach "$TMP_DMG" -readwrite -noverify -noautoopen -mountpoint "$MOUNT_DIR")
+# Extract the first /dev/diskN entry from the attach output
+ATTACH_DEV=$(echo "$ATTACH_OUT" | awk '/\/dev\/disk/{print $1; exit}')
+echo "  Attached as $ATTACH_DEV → $MOUNT_DIR"
 sleep 3
 
 # Build the background AppleScript clause only if the image was created
@@ -192,9 +197,10 @@ end tell
 APPLESCRIPT
 
 sync
-# Detach with a retry + force fallback so "Resource busy" doesn't abort the build
-hdiutil detach "$MOUNT_DIR" 2>/dev/null \
-  || { sleep 3; hdiutil detach "$MOUNT_DIR" -force; }
+# Detach by the exact device captured at attach time (not mount-point name,
+# which can be ambiguous when stale mounts from prior builds still linger).
+hdiutil detach "$ATTACH_DEV" 2>/dev/null \
+  || { sleep 3; hdiutil detach "$ATTACH_DEV" -force; }
 sleep 2
 
 # ── Convert to compressed read-only DMG ───────────────────────────────────────
