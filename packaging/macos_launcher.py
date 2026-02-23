@@ -99,7 +99,7 @@ def _find_python() -> str | None:
         try:
             r = subprocess.run(
                 [path, "-c",
-                 "import sys; v=sys.version_info; print(v.major*10+v.minor)"],
+                 "import sys; v=sys.version_info; print(v.major*100+v.minor)"],
                 capture_output=True, text=True, timeout=10, env=_env,
             )
             log.debug("_verify %s → rc=%s out=%r", path, r.returncode,
