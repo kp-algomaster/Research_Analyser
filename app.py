@@ -1092,6 +1092,11 @@ if run_clicked:
                 if len(content.authors) > 4:
                     _authors_str += f" +{len(content.authors) - 4} more"
 
+                # Extract summary sections synchronously — available immediately after OCR
+                _meth_summary = analyser._extract_methodology_summary(content)
+                _res_summary  = analyser._extract_results_summary(content)
+                _display_eqs  = [e for e in content.equations if not e.is_inline]
+
                 with _partial_slot.container():
                     st.markdown(
                         '<p class="sec-label">Results <span style="color:#8b949e;'
@@ -1111,22 +1116,41 @@ if run_clicked:
                     _cm3.metric("Figures",    len(content.figures))
                     _cm4.metric("References", len(content.references))
                     st.markdown("<br>", unsafe_allow_html=True)
+
+                    # Summary columns — same layout as the final Summary tab
                     _cp1, _cp2, _cp3 = st.columns(3, gap="medium")
                     with _cp1:
                         with st.expander("📖 Abstract", expanded=True):
-                            st.write(content.abstract[:600] if content.abstract else "—")
+                            st.write(content.abstract[:500] if content.abstract else "—")
                     with _cp2:
-                        with st.expander("🎨 Diagrams", expanded=True):
-                            if generate_diagrams:
-                                st.info("⏳  Generating diagrams…")
-                            else:
-                                st.caption("Not requested")
+                        with st.expander("⚙️ Methodology", expanded=True):
+                            st.write(_meth_summary or "—")
                     with _cp3:
-                        with st.expander("🧐 Peer Review", expanded=True):
-                            if generate_review:
-                                st.info("⏳  Peer review in progress…")
-                            else:
-                                st.caption("Not requested")
+                        with st.expander("📊 Results", expanded=True):
+                            st.write(_res_summary or "—")
+
+                    # Equations — available immediately after OCR
+                    if _display_eqs:
+                        st.markdown('<p class="sec-label">Equations</p>', unsafe_allow_html=True)
+                        for _eq in _display_eqs[:10]:
+                            with st.expander(f"**{_eq.label or _eq.id}**  ·  {_eq.section}"):
+                                st.latex(_eq.latex)
+                                if _eq.description:
+                                    st.caption(_eq.description)
+
+                    # Processing indicators for tasks still running
+                    _pi_cols = []
+                    if generate_diagrams:
+                        _pi_cols.append(("🎨 Diagrams", "⏳  Generating diagrams…"))
+                    if generate_review:
+                        _pi_cols.append(("🧐 Peer Review", "⏳  Peer review in progress…"))
+                    if _pi_cols:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        _pic = st.columns(len(_pi_cols), gap="medium")
+                        for _col, (_label, _msg) in zip(_pic, _pi_cols):
+                            with _col:
+                                with st.expander(_label, expanded=True):
+                                    st.info(_msg)
 
                 # ── Stage 3 : Parallel tasks — diagrams + peer review (40 → 80 %) ──
                 _parallel_tasks = []
