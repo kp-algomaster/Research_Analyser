@@ -22,10 +22,15 @@ rm -rf "$DIST_DIR" "$BUILD_DIR" "${APP_NAME}.spec"
 # Remove stale bytecode caches so PyInstaller bundles freshly compiled .pyc files
 find . -type d -name "__pycache__" -not -path "./.venv*" -exec rm -rf {} + 2>/dev/null || true
 
+# ── PyInstaller: LIGHTWEIGHT bundle ───────────────────────────────────────────
+# Heavy ML/data deps (torch, streamlit, langchain, scipy, …) are NOT bundled.
+# They are installed into ~/.researchanalyser/venv by the launcher on first run.
+# This keeps the .app at ~80-150 MB instead of 3+ GB.
 pyinstaller \
   --noconfirm \
   --log-level WARN \
   --windowed \
+  --strip \
   --name "$APP_NAME" \
   --osx-bundle-identifier "com.research.analyser" \
   --add-data "app.py:." \
@@ -33,56 +38,8 @@ pyinstaller \
   --add-data "monkeyocr.py:." \
   --add-data "research_analyser:research_analyser" \
   --collect-all webview \
-  --collect-all streamlit \
-  --collect-all altair \
-  --collect-all pydeck \
-  --collect-data pandas \
-  --copy-metadata pandas \
-  --collect-all langgraph \
-  --collect-all langchain \
-  --collect-all langchain_openai \
-  --collect-all langchain_community \
-  --collect-all langchain_core \
-  --collect-all knowledge_storm \
-  --collect-all dspy \
-  --collect-all litellm \
-  --copy-metadata pydantic \
-  --copy-metadata pydantic-settings \
-  --copy-metadata pydantic-core \
-  --copy-metadata tavily-python \
-  --copy-metadata httpx \
-  --copy-metadata aiohttp \
-  --copy-metadata rich \
-  --copy-metadata click \
-  --copy-metadata knowledge-storm \
-  --copy-metadata dspy-ai \
-  --copy-metadata litellm \
   --hidden-import webview \
   --hidden-import webview.platforms.cocoa \
-  --hidden-import langgraph \
-  --hidden-import langgraph.graph \
-  --hidden-import langchain_openai \
-  --hidden-import langchain_community \
-  --hidden-import langchain_core \
-  --hidden-import tavily \
-  --hidden-import sklearn \
-  --hidden-import sklearn.utils \
-  --hidden-import tiktoken \
-  --hidden-import tiktoken_ext \
-  --hidden-import tiktoken_ext.openai_public \
-  --hidden-import dspy \
-  --hidden-import dspy.predict \
-  --hidden-import dspy.retrieve \
-  --hidden-import knowledge_storm \
-  --hidden-import knowledge_storm.lm \
-  --hidden-import knowledge_storm.rm \
-  --hidden-import litellm \
-  --hidden-import litellm.utils \
-  --exclude-module pandas.tests \
-  --exclude-module numpy.tests \
-  --exclude-module scipy.tests \
-  --exclude-module matplotlib.tests \
-  --exclude-module sklearn.tests \
   packaging/macos_launcher.py
 
 APP_PATH="$DIST_DIR/${APP_NAME}.app"
