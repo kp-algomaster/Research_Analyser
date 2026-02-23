@@ -10,10 +10,10 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 - **Agentic Paper Review** — LangGraph 9-node workflow with ML-calibrated scoring (Soundness, Presentation, Contribution)
 - **STORM Wikipedia Report** — Stanford OVAL's knowledge-storm generates a cited Wikipedia-style article about the paper's topic, grounded in the paper's own extracted content
 - **PaperReview.ai Comparison** — Upload external review JSON from [PaperReview.ai](https://paperreview.ai) to compare scores against local review
-- **Configurable API Keys** — Sidebar settings for Google (PaperBanana), OpenAI (Reviewer), and Tavily (Related Work Search) keys
+- **Configuration Page** — Dedicated settings page for API keys (Google, OpenAI, Tavily, HuggingFace), model selection (OCR variant, review LLM, diagram provider), STORM and TTS toggles, and output paths
 - **Audio Narration** — Qwen3-TTS reads your analysis report aloud as a downloadable WAV file
 - **Structured Reports** — Markdown + HTML reports with key findings, equations, strengths/weaknesses, and visual summaries
-- **macOS DMG App** — Standalone desktop app bundled with PyInstaller
+- **Cross-platform Desktop App** — Standalone native-window bundles for macOS (DMG), Windows (EXE), and Linux (AppImage / DEB) via PyInstaller + pywebview
 
 ## Architecture
 
@@ -85,12 +85,166 @@ streamlit run app.py
 uvicorn research_analyser.api:app --host 0.0.0.0 --port 8000
 ```
 
-### Build macOS DMG
+---
+
+## Distribution Builds
+
+The app can be packaged as a self-contained native desktop application on all three platforms.  Each platform has a dedicated launcher (`packaging/<platform>_launcher.py`) and build script.  All builds produce a **native webview window** (no browser required) — macOS uses WKWebView, Windows uses Edge WebView2, Linux uses WebKit2GTK.
+
+> **Common prerequisite:** create and populate the Python 3.12 virtual environment first (one-time setup):
+> ```bash
+> python3.12 -m venv .venv312
+> source .venv312/bin/activate          # macOS/Linux
+> .venv312\Scripts\Activate.ps1         # Windows (PowerShell)
+> pip install -r requirements.txt
+> pip install monkeyocr paperbanana
+> python -m monkeyocr.download --model MonkeyOCR-pro-3B
+> ```
+
+---
+
+### macOS — DMG
+
+**Build machine:** macOS 12 Monterey or later · Python 3.12 · Xcode Command Line Tools
 
 ```bash
+# One command from the repo root
 ./scripts/build_macos_dmg.sh
-# Output: dist/ResearchAnalyser.dmg
+
+# Outputs
+dist/ResearchAnalyser.app   # Standalone .app bundle
+dist/ResearchAnalyser.dmg   # Drag-and-drop disk image (~500 MB)
 ```
+
+**What it produces:** A native macOS `.app` using `WKWebView` via pywebview.  Outputs go to `~/ResearchAnalyserOutput/`.  Launcher log at `~/ResearchAnalyserOutput/launcher.log`.
+
+**Install:** Open `ResearchAnalyser.dmg`, drag the app to `/Applications`.
+
+> **First launch:** macOS Gatekeeper may block an unsigned app.  Right-click → Open, then confirm.
+
+---
+
+### Windows — EXE
+
+**Build machine:** Windows 10/11 · Python 3.12 · PowerShell 5+
+
+#### Prerequisites
+
+1. Install [Python 3.12](https://python.org/downloads) (check *Add to PATH*).
+2. Install [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (already present on Windows 11 and most Windows 10 systems).
+3. Create and populate the venv (see common prerequisite above, use PowerShell paths).
+
+#### Build
+
+```powershell
+# From repo root in PowerShell
+.\scripts\build_windows_exe.ps1
+
+# Outputs
+dist\ResearchAnalyser\ResearchAnalyser.exe   # Portable executable + dependencies
+dist\ResearchAnalyser-Windows.zip            # Distributable archive (~500 MB)
+```
+
+**What it produces:** A portable folder — zip it up and distribute.  The `.exe` opens a native Edge WebView2 window.  Outputs go to `%USERPROFILE%\ResearchAnalyserOutput\`.
+
+**Install (end user):** Extract the ZIP anywhere, double-click `ResearchAnalyser.exe`.
+
+#### Optional: NSIS installer
+
+For a proper installer wizard (`ResearchAnalyserSetup.exe`):
+
+1. Install [NSIS](https://nsis.sourceforge.io/Download).
+2. Run `makensis packaging\installer.nsi` after the build script completes.
+
+> **Antivirus false positives:** PyInstaller-packed executables are sometimes flagged.  Sign the `.exe` with a code-signing certificate to avoid this in production.
+
+---
+
+### Linux — AppImage / DEB
+
+**Build machine:** Ubuntu 22.04+ or Fedora 38+ · Python 3.12
+
+#### Prerequisites
+
+```bash
+# Debian/Ubuntu
+sudo apt install python3.12 python3.12-venv python3.12-dev \
+                 gir1.2-webkit2-4.0 python3-gi
+
+# Fedora/RHEL
+sudo dnf install python3.12 python3.12-devel \
+                 webkit2gtk4.0 python3-gobject
+```
+
+For `.AppImage` output, install `appimagetool`:
+
+```bash
+wget https://github.com/AppImage/AppImageKit/releases/latest/download/appimagetool-x86_64.AppImage
+chmod +x appimagetool-x86_64.AppImage
+sudo mv appimagetool-x86_64.AppImage /usr/local/bin/appimagetool
+```
+
+For `.deb` output, install `fpm`:
+
+```bash
+sudo apt install ruby-dev build-essential
+sudo gem install fpm
+```
+
+#### Build
+
+```bash
+# Raw bundle only (fastest)
+./scripts/build_linux_package.sh
+
+# Bundle + AppImage
+./scripts/build_linux_package.sh --appimage
+
+# Bundle + .deb package
+./scripts/build_linux_package.sh --deb
+
+# All outputs
+./scripts/build_linux_package.sh --all
+
+# Outputs
+dist/ResearchAnalyser/ResearchAnalyser       # Portable binary + dependencies
+dist/ResearchAnalyser.AppImage               # Self-contained (--appimage)
+dist/ResearchAnalyser_1.0.0_amd64.deb        # Debian installer  (--deb)
+```
+
+**What it produces:**
+- **AppImage** — runs on any modern Linux distribution without installation; double-click or `chmod +x ResearchAnalyser.AppImage && ./ResearchAnalyser.AppImage`.  Tries native WebKit2GTK window first; falls back to `xdg-open` (default browser) automatically if the GTK webview is unavailable.
+- **.deb** — installs to `/opt/ResearchAnalyser/` with a `.desktop` entry; requires `gir1.2-webkit2-4.0` as a system dependency.
+
+**Install (end user, AppImage):**
+
+```bash
+chmod +x ResearchAnalyser.AppImage
+./ResearchAnalyser.AppImage
+```
+
+**Install (end user, .deb):**
+
+```bash
+sudo dpkg -i ResearchAnalyser_1.0.0_amd64.deb
+sudo apt install -f          # resolve any missing system dependencies
+```
+
+> **WebKit system dependency:** The native webview window requires `webkit2gtk` on the *target* machine (not bundled).  If absent, the app opens in the default browser instead — full functionality is preserved.
+
+---
+
+### Build artefact sizes (approximate)
+
+| Platform | Format | Size |
+|----------|--------|------|
+| macOS | `.dmg` | ~500 MB |
+| Windows | `.zip` | ~450 MB |
+| Linux | `.AppImage` | ~480 MB |
+
+Sizes are large because PyTorch (MonkeyOCR) and the full LangChain stack are included in the bundle.
+
+---
 
 ## Usage Examples
 
@@ -116,11 +270,13 @@ python -m research_analyser analyse paper.pdf --storm
 
 ### Web UI
 
-The Streamlit UI provides:
-- **Sidebar** — Configure API keys (Google, OpenAI, Tavily), diagram types, provider, and venue
-- **Analysis** — Upload PDF or enter arXiv URL, click "Analyse Paper"
-- **Audio Narration** — Enable "Generate Audio Narration (Qwen3-TTS)" checkbox to produce an in-browser audio player and downloadable WAV
-- **PaperReview.ai Comparison** — Upload a review JSON from paperreview.ai to compare scores
+The Streamlit UI has three pages (navigation in the left sidebar):
+
+| Page | What it does |
+|------|-------------|
+| **Analyse Paper** | Upload a PDF or enter an arXiv/DOI URL, choose per-run options (diagrams, review, audio, STORM), click **Analyse Paper** |
+| **Configuration** | Set API keys (Google, OpenAI, Tavily, HuggingFace), choose OCR model variant, review LLM, diagram provider, STORM/TTS toggles, and output paths — persisted for the session |
+| **Server Management** | Start/stop the FastAPI backend, inspect connection status and device badges |
 
 ### Python API
 
