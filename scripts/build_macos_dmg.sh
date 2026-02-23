@@ -99,10 +99,11 @@ ln -s /Applications "$STAGE_DIR/Applications"
 
 # Generate background image (Pillow preferred; stdlib PNG fallback)
 # Layout (540×320 canvas, window bounds {200,100,740,420}):
-#   Left well  : x 40–230, y 45–240  → icon top-left AppleScript {85, 75}
-#   Right well : x 310–500, y 45–240 → icon top-left AppleScript {355, 75}
-#   Arrow      : x 238–302, y 142    (centred between wells)
-#   Text       : y 264, 281
+#   Finder set position = CENTRE of icon image (100 pt icons).
+#   Left icon centre : {135, 140}  → left well  (65,70)→(205,250)
+#   Right icon centre: {405, 140}  → right well (335,70)→(475,250)
+#   Arrow            : x 225–315, y 140
+#   Text             : y 270, 287
 BG_PATH="$STAGE_DIR/.background/background.png"
 python3 -c "
 import struct, zlib
@@ -120,13 +121,14 @@ try:
                fill=(int(10 + t*8), int(13 + t*6), int(19 + t*11)))
 
     # ── Well geometry ─────────────────────────────────────────────────────────
-    # Icon top-left set to {85,75} and {355,75} in AppleScript (100 pt icons).
-    # Icon image: x+0..+100, y+0..+100.  Label (≈30 pt): y+104..+134.
-    # Wells add 18–22 pt padding on each side around that bounding box.
+    # Finder set position uses CENTRE of the icon IMAGE (confirmed from
+    # screenshots).  Icon centres: left=(135,140), right=(405,140).
+    # Icon image: cx±50 pt.  Label below icon: cy+55 → cy+90 (≈35 pt).
+    # Wells: 20 pt padding around the full icon+label bounding box.
     R = 14                                   # corner radius
-    LX1, LY1, LX2, LY2 = 62,  55, 212, 218 # left well  (150 × 163 pt)
-    RX1, RY1, RX2, RY2 = 332, 55, 482, 218 # right well (150 × 163 pt)
-    MID_Y = 128                              # vertical centre of icon image
+    LX1, LY1, LX2, LY2 = 65,  70, 205, 250 # left well  (140 × 180 pt)
+    RX1, RY1, RX2, RY2 = 335, 70, 475, 250 # right well (140 × 180 pt)
+    MID_Y = 140                              # == icon centre y
 
     # Fake drop-shadow: darker rect offset by 2 px
     SHADOW = (6, 8, 12)
@@ -159,9 +161,9 @@ try:
     except Exception:
         f1 = f2 = None
     kw = lambda f: {'font': f} if f else {}
-    d.text((W//2, 248), 'Drag to Applications to install',
+    d.text((W//2, 270), 'Drag to Applications to install',
            fill=(155, 165, 178), anchor='mm', **kw(f1))
-    d.text((W//2, 265), 'Then open from your Applications folder',
+    d.text((W//2, 287), 'Then open from your Applications folder',
            fill=(65, 75, 92), anchor='mm', **kw(f2))
 
     img.save(bg)
@@ -222,8 +224,8 @@ tell application "Finder"
     set the icon size of the icon view options of container window to 100
     set the arrangement of the icon view options of container window to not arranged
     ${BG_SCRIPT}
-    set position of item "${APP_NAME}.app" of container window to {85, 75}
-    set position of item "Applications" of container window to {355, 75}
+    set position of item "${APP_NAME}.app" of container window to {135, 140}
+    set position of item "Applications" of container window to {405, 140}
     close
     open
     update without registering applications

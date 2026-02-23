@@ -135,7 +135,7 @@ st.markdown("""
 }
 .stTabs [data-baseweb="tab"] {
     background: transparent !important;
-    color: #8b949e !important; font-size: 13px !important;
+    color: #c9d1d9 !important; font-size: 13px !important;
     font-weight: 500 !important; padding: 10px 20px !important;
     border-radius: 0 !important;
     border-bottom: 2px solid transparent !important;
@@ -178,7 +178,7 @@ st.markdown("""
 }
 .stButton > button[kind="secondary"] {
     background: #21262d !important; border: 1px solid #30363d !important;
-    color: #8b949e !important; border-radius: 8px !important;
+    color: #c9d1d9 !important; border-radius: 8px !important;
     font-size: 13px !important;
 }
 .stButton > button[kind="secondary"]:hover {
@@ -212,7 +212,7 @@ st.markdown("""
     border-radius: 10px !important;
 }
 [data-testid="stExpander"] > details > summary {
-    color: #8b949e !important; font-size: 13px !important;
+    color: #c9d1d9 !important; font-size: 13px !important;
 }
 [data-testid="stExpander"] > details > summary:hover { color: #f0f6fc !important; }
 
@@ -266,7 +266,7 @@ hr { border-color: #21262d !important; margin: 20px 0 !important; }
 .badge-gray   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
 .dot-green { color: #3fb950; }
 .dot-red   { color: #f85149; }
-.svc-url   { font-size: 0.78rem; color: #6e7681; margin-top: -6px; }
+.svc-url   { font-size: 0.78rem; color: #8b949e; margin-top: -6px; }
 
 /* ── Paper result card ── */
 .paper-card {
@@ -275,7 +275,7 @@ hr { border-color: #21262d !important; margin: 20px 0 !important; }
     padding: 18px 22px; margin-bottom: 18px;
 }
 .paper-title  { font-size: 18px; font-weight: 700; color: #f0f6fc; margin: 0 0 6px 0; line-height: 1.3; }
-.paper-meta   { font-size: 12px; color: #8b949e; }
+.paper-meta   { font-size: 12px; color: #c9d1d9; }
 .paper-chip   {
     display: inline-block; background: #1f2d47; color: #58a6ff;
     border: 1px solid #1f3d6e; border-radius: 99px;
@@ -305,7 +305,7 @@ hr { border-color: #21262d !important; margin: 20px 0 !important; }
 /* ── Dim score bar ── */
 .dimbar { margin-bottom: 12px; }
 .dimbar-header { display: flex; justify-content: space-between; margin-bottom: 5px; }
-.dimbar-name   { font-size: 12px; color: #8b949e; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.dimbar-name   { font-size: 12px; color: #c9d1d9; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .dimbar-val    { font-size: 12px; font-weight: 700; color: #58a6ff; }
 .dimbar-track  { height: 5px; background: #21262d; border-radius: 99px; overflow: hidden; }
 .dimbar-fill   { height: 100%; background: linear-gradient(90deg, #388bfd, #8957e5); border-radius: 99px; }
@@ -684,7 +684,7 @@ st.sidebar.markdown("""
               font-size:17px;flex-shrink:0">🔬</div>
   <div>
     <div style="font-size:14px;font-weight:700;color:#f0f6fc;line-height:1.2">Research Analyser</div>
-    <div style="font-size:11px;color:#8b949e">AI Paper Analysis</div>
+    <div style="font-size:11px;color:#c9d1d9">AI Paper Analysis</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1009,7 +1009,12 @@ if report:
                 use_container_width=True,
             )
         with d2:
-            report_json = json.dumps(report.to_json(), indent=2, ensure_ascii=False)
+            import datetime as _dt
+            def _json_serial(obj):
+                if isinstance(obj, (_dt.datetime, _dt.date)):
+                    return obj.isoformat()
+                raise TypeError(f"Type {type(obj).__name__} not serializable")
+            report_json = json.dumps(report.to_json(), indent=2, ensure_ascii=False, default=_json_serial)
             st.download_button(
                 "⬇  Report (JSON)",
                 report_json,
