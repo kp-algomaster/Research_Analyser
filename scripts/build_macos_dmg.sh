@@ -98,38 +98,74 @@ cp -r "$APP_PATH" "$STAGE_DIR/"
 ln -s /Applications "$STAGE_DIR/Applications"
 
 # Generate background image (Pillow preferred; stdlib PNG fallback)
+# Layout (540×320 canvas, window bounds {200,100,740,420}):
+#   Left well  : x 40–230, y 45–240  → icon top-left AppleScript {85, 75}
+#   Right well : x 310–500, y 45–240 → icon top-left AppleScript {355, 75}
+#   Arrow      : x 238–302, y 142    (centred between wells)
+#   Text       : y 264, 281
 BG_PATH="$STAGE_DIR/.background/background.png"
 python3 -c "
-import sys, struct, zlib
+import struct, zlib
 bg = '$BG_PATH'
 W, H = 540, 320
 try:
     from PIL import Image, ImageDraw, ImageFont
-    img = Image.new('RGB', (W, H), (13, 17, 23))
+
+    # ── Canvas: dark vertical gradient ───────────────────────────────────────
+    img = Image.new('RGB', (W, H))
     d = ImageDraw.Draw(img)
-    # Subtle radial-glow hint at centre
-    for r in range(80, 0, -4):
-        alpha = int(18 * (1 - r / 80))
-        d.ellipse([(W//2 - r, H//2 - 30 - r), (W//2 + r, H//2 - 30 + r)],
-                  fill=(56, 139, 253))
-    # Arrow shaft + head between icon positions (app=140, apps=400, y=155)
-    d.line([(220, 155), (308, 155)], fill=(88, 166, 255), width=3)
-    d.polygon([(308, 145), (328, 155), (308, 165)], fill=(88, 166, 255))
-    # Instructions label
+    for y in range(H):
+        t = y / H
+        d.line([(0, y), (W, y)],
+               fill=(int(10 + t*8), int(13 + t*6), int(19 + t*11)))
+
+    # ── Well geometry ─────────────────────────────────────────────────────────
+    R = 16                                   # corner radius
+    LX1, LY1, LX2, LY2 = 40,  45, 230, 240 # left well
+    RX1, RY1, RX2, RY2 = 310, 45, 500, 240 # right well
+    MID_Y = (LY1 + LY2) // 2               # 142 – vertical centre
+
+    # Fake drop-shadow: darker rect offset by 2 px
+    SHADOW = (6, 8, 12)
+    for bx1, by1, bx2, by2 in [(LX1, LY1, LX2, LY2), (RX1, RY1, RX2, RY2)]:
+        d.rounded_rectangle([bx1+2, by1+3, bx2+2, by2+3],
+                            radius=R, fill=SHADOW)
+
+    # Well backgrounds
+    FILL    = (20, 25, 33)
+    BORDER  = (33, 40, 52)
+    HILITE  = (38, 46, 60)   # top-edge inner highlight
+    for bx1, by1, bx2, by2 in [(LX1, LY1, LX2, LY2), (RX1, RY1, RX2, RY2)]:
+        d.rounded_rectangle([bx1, by1, bx2, by2],
+                            radius=R, fill=FILL, outline=BORDER, width=1)
+        # 1-px inner highlight along the top edge
+        d.line([(bx1+R, by1+1), (bx2-R, by1+1)], fill=HILITE, width=1)
+
+    # ── Arrow (shaft + head) ──────────────────────────────────────────────────
+    AX0, AX1 = LX2 + 18, RX1 - 18          # 248 → 292  (44 px gap each side)
+    HEAD = 12                               # arrowhead length
+    d.line([(AX0, MID_Y), (AX1 - HEAD, MID_Y)],
+           fill=(52, 120, 230), width=2)
+    d.polygon([(AX1-HEAD, MID_Y-7), (AX1, MID_Y), (AX1-HEAD, MID_Y+7)],
+              fill=(80, 150, 255))
+
+    # ── Text ──────────────────────────────────────────────────────────────────
     try:
-        font = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 14)
-        font_sm = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 12)
+        f1 = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 13)
+        f2 = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 11)
     except Exception:
-        font = font_sm = None
+        f1 = f2 = None
     kw = lambda f: {'font': f} if f else {}
-    d.text((270, 218), 'Drag to Applications to install', fill=(139, 148, 158),
-           anchor='mm', **kw(font))
-    d.text((270, 238), 'Then open from your Applications folder', fill=(68, 78, 90),
-           anchor='mm', **kw(font_sm))
+    d.text((W//2, 262), 'Drag to Applications to install',
+           fill=(155, 165, 178), anchor='mm', **kw(f1))
+    d.text((W//2, 279), 'Then open from your Applications folder',
+           fill=(65, 75, 92), anchor='mm', **kw(f2))
+
     img.save(bg)
-    print('  Background: Pillow')
-except Exception as _e1:
-    # stdlib-only fallback: solid dark PNG, no text
+    print('  Background: OK')
+
+except Exception as _e:
+    print(f'  Pillow failed ({_e}); using stdlib fallback')
     try:
         rows = bytearray()
         for y in range(H):
@@ -137,13 +173,15 @@ except Exception as _e1:
             for x in range(W):
                 rows += bytes([13, 17, 23])
         compressed = zlib.compress(bytes(rows), 9)
-        def chunk(tag, data):
-            crc = zlib.crc32(tag + data) & 0xFFFFFFFF
-            return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', crc)
+        def chunk(t, d):
+            crc = zlib.crc32(t+d) & 0xFFFFFFFF
+            return struct.pack('>I', len(d)) + t + d + struct.pack('>I', crc)
         ihdr = struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)
-        png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr)
-               + chunk(b'IDAT', compressed) + chunk(b'IEND', b''))
-        open(bg, 'wb').write(png)
+        open(bg, 'wb').write(
+            b'\x89PNG\r\n\x1a\n'
+            + chunk(b'IHDR', ihdr)
+            + chunk(b'IDAT', compressed)
+            + chunk(b'IEND', b''))
         print('  Background: stdlib fallback (no text)')
     except Exception as _e2:
         print(f'  Background skipped: {_e2}')
@@ -181,8 +219,8 @@ tell application "Finder"
     set the icon size of the icon view options of container window to 100
     set the arrangement of the icon view options of container window to not arranged
     ${BG_SCRIPT}
-    set position of item "${APP_NAME}.app" of container window to {140, 155}
-    set position of item "Applications" of container window to {400, 155}
+    set position of item "${APP_NAME}.app" of container window to {85, 75}
+    set position of item "Applications" of container window to {355, 75}
     close
     open
     update without registering applications
