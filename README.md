@@ -2,6 +2,10 @@
 
 An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for PDF extraction, **PaperBanana** for publication-quality diagram generation, **LangGraph Agentic Reviewer** for peer-review-quality analysis, **Qwen3-TTS** for audio narration, and **PaperReview.ai** comparison for external review benchmarking.
 
+## Screenshot
+
+![Research Analyser — main analysis screen](docs/screenshots/app_screenshot.png)
+
 ## Features
 
 - **PDF Upload & URL Input** — Upload PDFs, paste paper URLs (arXiv, Semantic Scholar, DOI), or type a local file path directly in the app window
