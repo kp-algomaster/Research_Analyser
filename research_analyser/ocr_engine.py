@@ -117,8 +117,8 @@ class OCREngine:
             except Exception as e:
                 logger.warning(f"Failed to parse TeX source equations from {tex_source_path}: {e}")
 
-        tables = self.extract_tables(blocks)
-        figures = self.extract_figures(blocks)
+        tables = self.extract_tables(blocks, markdown_text)
+        figures = self.extract_figures(blocks, markdown_text)
         title = self._extract_title(markdown_text, sections)
         authors = self._extract_authors(markdown_text)
         abstract = self._extract_abstract(markdown_text, sections)
@@ -224,13 +224,17 @@ class OCREngine:
 
         return equations
 
-    def extract_tables(self, blocks: list[dict]) -> list[Table]:
-        """Extract tables from MonkeyOCR block output."""
+    def extract_tables(self, blocks: list[dict], markdown_text: str = "") -> list[Table]:
+        """Extract tables from MonkeyOCR block output.
+
+        Falls back to markdown pipe-table detection when the blocks JSON is
+        unavailable or contains no table entries.
+        """
         tables = []
         table_counter = 0
 
         for block in blocks:
-            if block.get("type") == "table":
+            if block.get("type") in ("table", "table_body", "table_caption"):
                 table_counter += 1
                 tables.append(
                     Table(
@@ -241,15 +245,64 @@ class OCREngine:
                     )
                 )
 
+        # Fallback: detect markdown pipe tables when block output is empty
+        if not tables and markdown_text:
+            tables = self._extract_tables_from_markdown(markdown_text)
+
         return tables
 
-    def extract_figures(self, blocks: list[dict]) -> list[Figure]:
-        """Extract figures from MonkeyOCR block output."""
+    def _extract_tables_from_markdown(self, text: str) -> list[Table]:
+        """Detect markdown pipe-formatted tables in OCR output."""
+        tables: list[Table] = []
+        table_counter = 0
+        lines = text.split("\n")
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if "|" in line and line.strip().startswith("|"):
+                # Collect contiguous table rows
+                table_lines = []
+                while i < len(lines) and "|" in lines[i] and lines[i].strip().startswith("|"):
+                    table_lines.append(lines[i])
+                    i += 1
+                # Must have header + separator + at least one data row
+                if len(table_lines) >= 3 and re.match(r"^\s*\|[\s\-\|:]+\|\s*$", table_lines[1]):
+                    table_counter += 1
+                    col_count = table_lines[0].count("|") - 1
+                    row_count = len(table_lines) - 2  # header + separator excluded
+                    # Look for a Table caption just before or after
+                    caption = None
+                    if i < len(lines):
+                        cap_match = re.match(
+                            r"^\*?\*?(?:Table|Tab\.?)\s*\d+[.:]\*?\*?\s*(.+)",
+                            lines[i].strip(), re.IGNORECASE,
+                        )
+                        if cap_match:
+                            caption = cap_match.group(1)
+                    tables.append(
+                        Table(
+                            id=f"table_{table_counter:03d}",
+                            content="\n".join(table_lines),
+                            caption=caption,
+                            rows=row_count,
+                            cols=col_count,
+                        )
+                    )
+            else:
+                i += 1
+        return tables
+
+    def extract_figures(self, blocks: list[dict], markdown_text: str = "") -> list[Figure]:
+        """Extract figures from MonkeyOCR block output.
+
+        Falls back to caption-pattern scanning when the blocks JSON is
+        unavailable or contains no figure entries.
+        """
         figures = []
         fig_counter = 0
 
         for block in blocks:
-            if block.get("type") == "figure":
+            if block.get("type") in ("figure", "figure_caption", "image"):
                 fig_counter += 1
                 figures.append(
                     Figure(
@@ -261,6 +314,29 @@ class OCREngine:
                     )
                 )
 
+        # Fallback: find Figure N captions in the markdown text
+        if not figures and markdown_text:
+            figures = self._extract_figures_from_markdown(markdown_text)
+
+        return figures
+
+    def _extract_figures_from_markdown(self, text: str) -> list[Figure]:
+        """Detect figures by scanning for 'Figure N' / 'Fig. N' caption lines."""
+        figures: list[Figure] = []
+        fig_counter = 0
+        caption_pattern = re.compile(
+            r"(?:^|\n)\s*\*?\*?(?:Figure|Fig\.?)\s*(\d+)\*?\*?[.:\-]?\s*(.{5,200})",
+            re.IGNORECASE,
+        )
+        for m in caption_pattern.finditer(text):
+            caption_text = m.group(2).strip().rstrip("*")
+            fig_counter += 1
+            figures.append(
+                Figure(
+                    id=f"fig_{fig_counter:03d}",
+                    caption=caption_text,
+                )
+            )
         return figures
 
     def parse_sections(self, markdown_text: str) -> list[Section]:
@@ -362,26 +438,46 @@ class OCREngine:
         return ""
 
     def _extract_references(self, text: str) -> list[Reference]:
-        """Extract references (basic pattern matching)."""
-        references = []
+        """Extract references supporting multiple citation formats.
+
+        Handled formats:
+          [1] Author, Title...          (IEEE / ACL style)
+          1. Author, Title...           (numbered list style)
+          Author et al. (Year). Title   (APA / NeurIPS style, author-year)
+        """
+        references: list[Reference] = []
         ref_section = False
         ref_counter = 0
 
+        # Patterns for bracketed [N] and numbered N. styles
+        _bracketed = re.compile(r"^\[(\d+)\]\s*(.+)")
+        _numbered  = re.compile(r"^(\d+)\.\s+(.+)")
+        # APA-style: starts with a word (author surname) followed by common reference tokens
+        _apa       = re.compile(r"^[A-Z][a-zA-Zéàü\-]+(?:,\s*[A-Z]\.?)+.{10,}")
+
         for line in text.split("\n"):
-            if re.match(r"^#{1,3}\s*(References|Bibliography)", line, re.IGNORECASE):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Detect start of references section
+            if re.match(r"^#{1,3}\s*(References|Bibliography|Works Cited)", stripped, re.IGNORECASE):
                 ref_section = True
                 continue
 
-            if ref_section and line.strip():
-                # Check if line starts with a reference marker
-                ref_match = re.match(r"^\[(\d+)\]\s*(.+)", line.strip())
-                if ref_match:
-                    ref_counter += 1
-                    references.append(
-                        Reference(
-                            id=f"ref_{ref_counter:03d}",
-                            text=ref_match.group(2),
-                        )
-                    )
+            if not ref_section:
+                continue
+
+            # Stop at the next top-level section (after References starts)
+            if re.match(r"^#{1,2}\s+\w", stripped) and ref_counter:
+                break
+
+            m = _bracketed.match(stripped) or _numbered.match(stripped)
+            if m:
+                ref_counter += 1
+                references.append(Reference(id=f"ref_{ref_counter:03d}", text=m.group(2)))
+            elif _apa.match(stripped) and len(stripped) > 20:
+                ref_counter += 1
+                references.append(Reference(id=f"ref_{ref_counter:03d}", text=stripped))
 
         return references

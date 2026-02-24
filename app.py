@@ -1775,9 +1775,11 @@ if report:
         unsafe_allow_html=True,
     )
 
-    # Stats row
+    # Stats row — Equations counts display-only (numbered equations in the paper);
+    # inline variable mentions ($x$, $n$, etc.) are excluded from the headline number.
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Equations",  len(report.extracted_content.equations))
+    _n_display_eqs = sum(1 for eq in report.extracted_content.equations if not eq.is_inline)
+    m1.metric("Equations",  _n_display_eqs)
     m2.metric("Tables",     len(report.extracted_content.tables))
     m3.metric("Figures",    len(report.extracted_content.figures))
     m4.metric("References", len(report.extracted_content.references))
