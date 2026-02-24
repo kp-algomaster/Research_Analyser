@@ -41,14 +41,12 @@ logging.basicConfig(level=logging.INFO)
 _NATIVE_APP = os.environ.get("RA_NATIVE_APP") == "1"
 
 
-def _native_save_as(data, file_name: str, key_suffix: str = "") -> None:
-    """Save a file to ~/Downloads/ in the native macOS app.
+def _native_save_as(data, file_name: str, state_key: str = "") -> None:
+    """Save a file to ~/Downloads/ and record the path in session state.
 
-    The osascript NSSavePanel approach is not used here because the dialog runs
-    in a subprocess that appears *behind* the fullscreen pywebview window, making
-    it invisible to the user.  Instead we save directly to ~/Downloads/ — a
-    predictable, always-writable location — and offer a "Show in Finder" button
-    so the user can immediately see and move the file.
+    The path is stored so that the "Show in Finder" button can be rendered
+    outside this function and will still work on the subsequent Streamlit rerun
+    triggered by clicking that button.
     """
     save_path = Path.home() / "Downloads" / file_name
     try:
@@ -60,12 +58,10 @@ def _native_save_as(data, file_name: str, key_suffix: str = "") -> None:
         st.error(f"Could not save file: {exc}")
         return
 
+    # Persist the saved path so the Finder-reveal button survives the next rerun.
+    sk = f"_saved_path_{state_key or file_name}"
+    st.session_state[sk] = str(save_path)
     st.success(f"Saved to **~/Downloads/{file_name}**")
-    if st.button("📂  Show in Finder", key=f"_reveal_{key_suffix or file_name}"):
-        try:
-            subprocess.Popen(["open", "-R", str(save_path)])
-        except Exception:
-            pass
 
 
 def _dl_button(
@@ -91,12 +87,24 @@ def _dl_button(
             use_container_width=use_container_width, key=key,
         )
         return
+
     # Native app: save to ~/Downloads/ and offer Finder reveal.
+    state_key = key or file_name
     btn_kwargs: dict = {"use_container_width": use_container_width}
     if key:
         btn_kwargs["key"] = key
     if st.button(label, **btn_kwargs):
-        _native_save_as(data, file_name, key_suffix=key or file_name)
+        _native_save_as(data, file_name, state_key=state_key)
+
+    # Show in Finder — rendered on every rerun once a path has been saved.
+    # Must live OUTSIDE the if-block above so it survives the button's own rerun.
+    saved = st.session_state.get(f"_saved_path_{state_key}")
+    if saved:
+        if st.button("📂  Show in Finder", key=f"_reveal_{state_key}"):
+            try:
+                subprocess.Popen(["/usr/bin/open", "-R", saved])
+            except Exception:
+                pass
 
 
 def _view_dl_buttons(
