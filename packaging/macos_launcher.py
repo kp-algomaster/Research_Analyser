@@ -474,6 +474,10 @@ def _launch_streamlit(
         "RESEARCH_ANALYSER_OUTPUT_DIR": str(_OUTPUT_DIR),
         "RESEARCH_ANALYSER_APP__OUTPUT_DIR": str(_OUTPUT_DIR),
         "RESEARCH_ANALYSER_APP__TEMP_DIR": str(_OUTPUT_DIR / "tmp"),
+        # Signal to app.py that we're running inside the native pywebview window
+        # so download buttons save directly to ~/Downloads/ instead of using
+        # browser-based st.download_button (which WKWebView cannot handle).
+        "RA_NATIVE_APP": "1",
         "STREAMLIT_GLOBAL_DEVELOPMENT_MODE": "false",
         # Dark theme — mirrors .streamlit/config.toml which Streamlit's subprocess
         # cannot find inside the frozen .app bundle.

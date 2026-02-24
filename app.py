@@ -35,6 +35,44 @@ from research_analyser.models import AnalysisOptions
 
 logging.basicConfig(level=logging.INFO)
 
+# ── Native-app download helper ─────────────────────────────────────────────────
+# When running inside the pywebview (WKWebView) native macOS window,
+# browser-based download links don't work. Save directly to ~/Downloads/ instead.
+_NATIVE_APP = os.environ.get("RA_NATIVE_APP") == "1"
+
+
+def _dl_button(
+    label: str,
+    data,
+    file_name: str,
+    mime: str = "text/plain",
+    use_container_width: bool = False,
+    key: str | None = None,
+) -> None:
+    """Download button that works in both browser and native pywebview app."""
+    if not _NATIVE_APP:
+        st.download_button(
+            label, data, file_name=file_name, mime=mime,
+            use_container_width=use_container_width, key=key,
+        )
+        return
+    # Native app: save directly to ~/Downloads/ on click
+    btn_kwargs: dict = {"use_container_width": use_container_width}
+    if key:
+        btn_kwargs["key"] = key
+    if st.button(label, **btn_kwargs):
+        save_path = Path.home() / "Downloads" / file_name
+        if isinstance(data, str):
+            save_path.write_text(data, encoding="utf-8")
+        else:
+            save_path.write_bytes(data)
+        st.success(f"Saved to `~/Downloads/{file_name}`")
+        try:
+            subprocess.call(["open", "-R", str(save_path)])
+        except Exception:
+            pass
+
+
 st.set_page_config(
     page_title="Research Analyser",
     page_icon="🔬",
@@ -633,7 +671,7 @@ def show_text_to_diagrams() -> None:
                                      caption=f"PaperBanana · {_td_pb_dtype}",
                                      use_container_width=True)
                             with open(_td_d.image_path, "rb") as _fh:
-                                st.download_button(
+                                _dl_button(
                                     "⬇  Download PNG", _fh.read(),
                                     file_name=f"diagram_{_td_pb_dtype}.png",
                                     mime="image/png",
@@ -1844,7 +1882,7 @@ if report:
         d1, d2 = st.columns(2, gap="medium")
         report_md = report.to_markdown()
         with d1:
-            st.download_button(
+            _dl_button(
                 "⬇  Full Report (Markdown)",
                 report_md,
                 file_name="analysis_report.md",
@@ -1858,7 +1896,7 @@ if report:
                     return obj.isoformat()
                 raise TypeError(f"Type {type(obj).__name__} not serializable")
             report_json = json.dumps(report.to_json(), indent=2, ensure_ascii=False, default=_json_serial)
-            st.download_button(
+            _dl_button(
                 "⬇  Report (JSON)",
                 report_json,
                 file_name="analysis_report.json",
@@ -1871,7 +1909,7 @@ if report:
         if _gen_audio and audio_file.exists():
             st.markdown("---")
             with open(audio_file, "rb") as af:
-                st.download_button(
+                _dl_button(
                     "⬇  Audio Narration (WAV)",
                     af.read(),
                     file_name="analysis_audio.wav",
@@ -1880,7 +1918,7 @@ if report:
                 )
         if _gen_storm and storm_file.exists():
             st.markdown("---")
-            st.download_button(
+            _dl_button(
                 "⬇  STORM Report (Markdown)",
                 storm_file.read_text(encoding="utf-8"),
                 file_name="storm_report.md",
@@ -1897,7 +1935,7 @@ if report:
             if audio_file.exists():
                 st.audio(str(audio_file), format="audio/wav")
                 with open(audio_file, "rb") as af:
-                    st.download_button(
+                    _dl_button(
                         "⬇  Download WAV",
                         af.read(),
                         file_name="analysis_audio.wav",
@@ -1919,7 +1957,7 @@ if report:
             tab_idx += 1
             if report.storm_report:
                 st.markdown(report.storm_report)
-                st.download_button(
+                _dl_button(
                     "⬇  Download STORM Report (Markdown)",
                     report.storm_report,
                     file_name="storm_report.md",
@@ -2006,7 +2044,7 @@ if ext_file is not None:
         st.markdown('<p class="sec-label">Comparison</p>', unsafe_allow_html=True)
         comparison_md = build_comparison_markdown(local, external)
         st.markdown(comparison_md)
-        st.download_button(
+        _dl_button(
             "⬇  Download Comparison (Markdown)",
             comparison_md,
             file_name="review_comparison.md",
