@@ -1688,7 +1688,8 @@ if _bg is not None:
                 unsafe_allow_html=True,
             )
             _bm1, _bm2, _bm3, _bm4 = st.columns(4)
-            _bm1.metric("Equations",  len(_cnt.equations))
+            _bm_n_display_eqs = sum(1 for _e in _cnt.equations if not _e.is_inline)
+            _bm1.metric("Equations",  _bm_n_display_eqs)
             _bm2.metric("Tables",     len(_cnt.tables))
             _bm3.metric("Figures",    len(_cnt.figures))
             _bm4.metric("References", len(_cnt.references))
