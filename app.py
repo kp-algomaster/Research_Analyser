@@ -725,6 +725,10 @@ def show_text_to_diagrams() -> None:
         disabled=not bool(st.session_state.get("td_text", "").strip()),
     )
 
+    # Clear cached result when user kicks off a new generation
+    if _td_run:
+        st.session_state.pop("_td_last_diagram", None)
+
     if _td_run and st.session_state.get("td_text", "").strip():
         _tdv       = st.session_state["td_text"].strip()
         _td_gkey   = _cfg("google_key", os.environ.get("GOOGLE_API_KEY", ""))
@@ -761,15 +765,13 @@ def show_text_to_diagrams() -> None:
                     if _td_diags:
                         _td_d = _td_diags[0]
                         if _td_d.image_path and Path(_td_d.image_path).exists():
-                            st.image(_td_d.image_path,
-                                     caption=f"PaperBanana · {_td_pb_dtype}",
-                                     use_container_width=True)
-                            with open(_td_d.image_path, "rb") as _fh:
-                                _dl_button(
-                                    "⬇  Download PNG", _fh.read(),
-                                    file_name=f"diagram_{_td_pb_dtype}.png",
-                                    mime="application/octet-stream",
-                                )
+                            # Cache so the image survives download-button reruns
+                            st.session_state["_td_last_diagram"] = {
+                                "kind": "image_path",
+                                "path": _td_d.image_path,
+                                "caption": f"PaperBanana · {_td_pb_dtype}",
+                                "file_name": f"diagram_{_td_pb_dtype}.png",
+                            }
                         else:
                             st.error(f"PaperBanana produced no image. {getattr(_td_d, 'error', '')}")
                     else:
@@ -888,8 +890,16 @@ def show_text_to_diagrams() -> None:
                             _td_buf = _td_io.BytesIO()
                             _td_plt.savefig(_td_buf, format="png", dpi=150, bbox_inches="tight")
                             _td_buf.seek(0)
-                            st.image(_td_buf, use_container_width=True)
+                            _td_png_bytes = _td_buf.read()
                             _td_plt.close("all")
+                            # Cache so the image survives download-button reruns
+                            st.session_state["_td_last_diagram"] = {
+                                "kind": "image_bytes",
+                                "bytes": _td_png_bytes,
+                                "caption": "Matplotlib",
+                                "file_name": "diagram_matplotlib.png",
+                                "code": _td_code,
+                            }
                             with st.expander("📋 Matplotlib code"):
                                 st.code(_td_code, language="python")
                         except Exception as _tde:
@@ -897,6 +907,37 @@ def show_text_to_diagrams() -> None:
                             if _td_code:
                                 with st.expander("📋 Generated code (with error)"):
                                     st.code(_td_code, language="python")
+
+    # ── Persistent diagram render ──────────────────────────────────────────────
+    # Shown on EVERY rerun (including after a download-button click) so the
+    # output screen is never lost when the user saves the file.
+    _td_cached = st.session_state.get("_td_last_diagram")
+    if _td_cached:
+        if _td_cached["kind"] == "image_path":
+            _td_cp = Path(_td_cached["path"])
+            if _td_cp.exists():
+                st.image(str(_td_cp), caption=_td_cached["caption"], use_container_width=True)
+                with open(_td_cp, "rb") as _td_cfh:
+                    _dl_button(
+                        "⬇  Save / Download PNG",
+                        _td_cfh.read(),
+                        file_name=_td_cached["file_name"],
+                        mime="application/octet-stream",
+                        use_container_width=True,
+                        key="_td_dl_pb",
+                    )
+        elif _td_cached["kind"] == "image_bytes":
+            import io as _td_io2  # noqa: PLC0415
+            st.image(_td_io2.BytesIO(_td_cached["bytes"]),
+                     caption=_td_cached.get("caption", ""), use_container_width=True)
+            _dl_button(
+                "⬇  Save / Download PNG",
+                _td_cached["bytes"],
+                file_name=_td_cached["file_name"],
+                mime="application/octet-stream",
+                use_container_width=True,
+                key="_td_dl_mpl",
+            )
 
 
 # ── Page: Server Management ───────────────────────────────────────────────────
@@ -1958,6 +1999,15 @@ if report:
                     )
                     if Path(diagram.image_path).exists():
                         st.image(diagram.image_path, caption=diagram.caption, use_container_width=True)
+                        with open(diagram.image_path, "rb") as _diag_fh:
+                            _dl_button(
+                                "⬇  Save / Download PNG",
+                                _diag_fh.read(),
+                                file_name=f"diagram_{diagram.diagram_type}.png",
+                                mime="application/octet-stream",
+                                use_container_width=True,
+                                key=f"_dl_diag_{i}",
+                            )
                     else:
                         st.info(f"Saved: `{diagram.image_path}`")
 
