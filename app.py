@@ -45,11 +45,15 @@ def _dl_button(
     label: str,
     data,
     file_name: str,
-    mime: str = "text/plain",
+    mime: str = "application/octet-stream",
     use_container_width: bool = False,
     key: str | None = None,
 ) -> None:
-    """Download button that works in both browser and native pywebview app."""
+    """Download button that works in both browser and native pywebview app.
+
+    Uses application/octet-stream by default so browsers always download
+    the file rather than opening it in a new tab / full-screen viewer.
+    """
     if not _NATIVE_APP:
         st.download_button(
             label, data, file_name=file_name, mime=mime,
@@ -71,6 +75,39 @@ def _dl_button(
             subprocess.call(["open", "-R", str(save_path)])
         except Exception:
             pass
+
+
+def _view_dl_buttons(
+    label: str,
+    data,
+    file_name: str,
+    content_type: str = "markdown",
+    key: str | None = None,
+) -> None:
+    """Render a View button and a Download button side-by-side.
+
+    View   — opens an inline full-page viewer (back button returns to results).
+    Download — saves the file locally without opening it in the browser.
+
+    content_type: "markdown" | "json" | "text" | "audio"
+    """
+    _key = key or file_name.replace(".", "_").replace("/", "_")
+    v_col, d_col = st.columns(2, gap="small")
+    with v_col:
+        if st.button("👁  View", key=f"_vw_open_{_key}", use_container_width=True):
+            st.session_state["_file_viewer"] = {
+                "label": label,
+                "data": data,
+                "file_name": file_name,
+                "content_type": content_type,
+            }
+            st.rerun()
+    with d_col:
+        _dl_button(
+            "⬇  Download", data, file_name=file_name,
+            mime="application/octet-stream",
+            use_container_width=True, key=f"_dl_{_key}",
+        )
 
 
 st.set_page_config(
@@ -674,7 +711,7 @@ def show_text_to_diagrams() -> None:
                                 _dl_button(
                                     "⬇  Download PNG", _fh.read(),
                                     file_name=f"diagram_{_td_pb_dtype}.png",
-                                    mime="image/png",
+                                    mime="application/octet-stream",
                                 )
                         else:
                             st.error(f"PaperBanana produced no image. {getattr(_td_d, 'error', '')}")
@@ -1689,6 +1726,41 @@ report = st.session_state.get("last_report")
 output_dir = st.session_state.get("last_output_dir", _cfg("output_dir", _DEFAULT_OUTPUT))
 
 if report:
+    # ── Inline file viewer (full-page, replaces results tabs) ─────────────────
+    if st.session_state.get("_file_viewer"):
+        _vw = st.session_state["_file_viewer"]
+        _vw_back, _vw_title = st.columns([1, 6])
+        with _vw_back:
+            if st.button("← Back to Home", key="_vw_back_btn"):
+                del st.session_state["_file_viewer"]
+                st.rerun()
+        with _vw_title:
+            st.markdown(
+                f'<p style="font-size:15px;font-weight:700;color:#e6edf3;margin:6px 0 0 0">'
+                f'{_vw["label"]}</p>',
+                unsafe_allow_html=True,
+            )
+        st.divider()
+        _vw_data = _vw["data"]
+        _vw_ct   = _vw["content_type"]
+        _vw_text = _vw_data if isinstance(_vw_data, str) else _vw_data.decode("utf-8", errors="replace")
+        if _vw_ct == "markdown":
+            st.markdown(_vw_text)
+        elif _vw_ct == "json":
+            st.code(_vw_text, language="json")
+        elif _vw_ct == "audio":
+            st.audio(_vw_data, format="audio/wav")
+        else:
+            st.text(_vw_text)
+        # Also offer download from inside the viewer
+        st.divider()
+        _dl_button(
+            f"⬇  Download {_vw['file_name']}", _vw_data,
+            file_name=_vw["file_name"], mime="application/octet-stream",
+            key="_vw_inline_dl",
+        )
+        st.stop()
+
     st.markdown('<p class="sec-label">Results</p>', unsafe_allow_html=True)
 
     # Paper card
@@ -1879,52 +1951,61 @@ if report:
     # ── Downloads tab ─────────────────────────────────────────────────────────
     with tabs[tab_idx]:
         tab_idx += 1
-        d1, d2 = st.columns(2, gap="medium")
         report_md = report.to_markdown()
-        with d1:
-            _dl_button(
-                "⬇  Full Report (Markdown)",
-                report_md,
-                file_name="analysis_report.md",
-                mime="text/markdown",
-                use_container_width=True,
-            )
-        with d2:
-            import datetime as _dt
-            def _json_serial(obj):
-                if isinstance(obj, (_dt.datetime, _dt.date)):
-                    return obj.isoformat()
-                raise TypeError(f"Type {type(obj).__name__} not serializable")
-            report_json = json.dumps(report.to_json(), indent=2, ensure_ascii=False, default=_json_serial)
-            _dl_button(
-                "⬇  Report (JSON)",
-                report_json,
-                file_name="analysis_report.json",
-                mime="application/json",
-                use_container_width=True,
-            )
+        import datetime as _dt
+        def _json_serial(obj):
+            if isinstance(obj, (_dt.datetime, _dt.date)):
+                return obj.isoformat()
+            raise TypeError(f"Type {type(obj).__name__} not serializable")
+        report_json = json.dumps(report.to_json(), indent=2, ensure_ascii=False, default=_json_serial)
+
+        st.markdown('<p class="sec-label">Report files</p>', unsafe_allow_html=True)
+        _dl_row1, _dl_row2 = st.columns(2, gap="medium")
+        with _dl_row1:
+            with st.container(border=True):
+                st.markdown("**Full Report (Markdown)**")
+                st.caption("Complete analysis in Markdown format")
+                _view_dl_buttons(
+                    "Full Report (Markdown)", report_md,
+                    file_name="analysis_report.md",
+                    content_type="markdown", key="report_md",
+                )
+        with _dl_row2:
+            with st.container(border=True):
+                st.markdown("**Report (JSON)**")
+                st.caption("Structured data for programmatic use")
+                _view_dl_buttons(
+                    "Report (JSON)", report_json,
+                    file_name="analysis_report.json",
+                    content_type="json", key="report_json",
+                )
+
         # Optional audio + STORM downloads if they were generated
         audio_file = Path(output_dir) / "analysis_audio.wav"
         storm_file = Path(output_dir) / "storm_report.md"
         if _gen_audio and audio_file.exists():
             st.markdown("---")
             with open(audio_file, "rb") as af:
-                _dl_button(
-                    "⬇  Audio Narration (WAV)",
-                    af.read(),
+                _audio_bytes = af.read()
+            with st.container(border=True):
+                st.markdown("**Audio Narration (WAV)**")
+                st.caption("TTS narration of the analysis")
+                _view_dl_buttons(
+                    "Audio Narration", _audio_bytes,
                     file_name="analysis_audio.wav",
-                    mime="audio/wav",
-                    use_container_width=True,
+                    content_type="audio", key="audio_narration",
                 )
         if _gen_storm and storm_file.exists():
             st.markdown("---")
-            _dl_button(
-                "⬇  STORM Report (Markdown)",
-                storm_file.read_text(encoding="utf-8"),
-                file_name="storm_report.md",
-                mime="text/markdown",
-                use_container_width=True,
-            )
+            _storm_text = storm_file.read_text(encoding="utf-8")
+            with st.container(border=True):
+                st.markdown("**STORM Report (Markdown)**")
+                st.caption("Wikipedia-style deep-dive report")
+                _view_dl_buttons(
+                    "STORM Report", _storm_text,
+                    file_name="storm_report.md",
+                    content_type="markdown", key="storm_report",
+                )
         st.success(f"All outputs saved to: `{output_dir}`")
 
     # ── Audio tab ─────────────────────────────────────────────────────────────
@@ -1939,7 +2020,7 @@ if report:
                         "⬇  Download WAV",
                         af.read(),
                         file_name="analysis_audio.wav",
-                        mime="audio/wav",
+                        mime="application/octet-stream",
                         use_container_width=True,
                     )
             else:
@@ -1961,7 +2042,7 @@ if report:
                     "⬇  Download STORM Report (Markdown)",
                     report.storm_report,
                     file_name="storm_report.md",
-                    mime="text/markdown",
+                    mime="application/octet-stream",
                     use_container_width=True,
                 )
             else:
@@ -2048,7 +2129,7 @@ if ext_file is not None:
             "⬇  Download Comparison (Markdown)",
             comparison_md,
             file_name="review_comparison.md",
-            mime="text/markdown",
+            mime="application/octet-stream",
         )
     except json.JSONDecodeError:
         st.error("Invalid JSON — please upload a valid review JSON file.")
