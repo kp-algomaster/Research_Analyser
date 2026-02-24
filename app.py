@@ -496,6 +496,277 @@ def _stop_service(name: str) -> None:
     st.session_state.pop(f"proc_{name}", None)
 
 
+# ── Page: Text to Diagrams ────────────────────────────────────────────────────
+
+_TD_MODELS = {
+    "PaperBanana": "paperbanana",
+    "Mermaid (via Gemini)": "mermaid",
+    "Graphviz DOT (via Gemini)": "graphviz",
+    "Matplotlib (via Gemini)": "matplotlib",
+}
+_TD_MODEL_CAPS = {
+    "paperbanana": (
+        "**PaperBanana** — Critic–Visualiser pipeline generates publication-quality research diagram images.  "
+        "Requires Google API key.  "
+        "[github.com/llmsresearch/paperbanana](https://github.com/llmsresearch/paperbanana)"
+    ),
+    "mermaid": (
+        "**Mermaid** — LLM writes Mermaid DSL (flowcharts, sequences, class diagrams, Gantt, mindmaps).  "
+        "Rendered client-side via Mermaid.js.  "
+        "[mermaid.js.org](https://mermaid.js.org)"
+    ),
+    "graphviz": (
+        "**Graphviz** — LLM writes DOT language (directed/undirected graphs, cluster layouts).  "
+        "Rendered with `st.graphviz_chart()`.  "
+        "[graphviz.org](https://graphviz.org)"
+    ),
+    "matplotlib": (
+        "**Matplotlib** — LLM writes Python plotting code executed in a sandboxed namespace.  "
+        "Best for data charts, bar graphs, and scientific figures.  "
+        "[matplotlib.org](https://matplotlib.org)"
+    ),
+}
+
+
+def show_text_to_diagrams() -> None:
+    st.markdown(
+        '<div class="hero"><p class="hero-title">Text to Diagrams</p>'
+        '<p class="hero-sub">Generate research diagrams from a text description using PaperBanana or open-source renderers</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    _td_c1, _td_c2 = st.columns([3, 2])
+    with _td_c1:
+        _td_model_label = st.selectbox(
+            "Model",
+            list(_TD_MODELS.keys()),
+            index=0,
+            key="td_model",
+            help="PaperBanana (default) produces the highest-quality research diagrams.",
+        )
+    _td_m = _TD_MODELS[_td_model_label]
+
+    with _td_c2:
+        if _td_m == "paperbanana":
+            _pb_type_map = {
+                "📐 Methodology": "methodology",
+                "🏗️ Architecture": "architecture",
+                "📈 Results": "results",
+            }
+            st.selectbox("Diagram type", list(_pb_type_map.keys()), key="td_pb_dtype")
+        elif _td_m == "mermaid":
+            st.selectbox(
+                "Mermaid subtype (hint)",
+                ["flowchart", "sequenceDiagram", "classDiagram", "erDiagram", "gantt", "mindmap"],
+                key="td_mtype",
+                help="Hint for the LLM — it may override based on your description.",
+            )
+        elif _td_m == "graphviz":
+            st.selectbox(
+                "Graph direction",
+                ["LR (left→right)", "TB (top→bottom)", "RL (right→left)", "BT (bottom→top)"],
+                key="td_gvdir",
+            )
+        else:
+            st.write("")
+
+    st.caption(_TD_MODEL_CAPS[_td_m])
+
+    _td_text = st.text_area(
+        "Describe the diagram",
+        placeholder=(
+            "Describe the system, process, or data to visualise.\n\n"
+            "Examples:\n"
+            "• Multi-stage pipeline: PDF → OCR → parallel diagram generation and peer review → AnalysisReport\n"
+            "• Encoder–decoder transformer with cross-attention and positional encodings\n"
+            "• Bar chart: PSNR scores — Ours 32.1 dB, NeRF 30.4 dB, Gaussian Splatting 31.2 dB"
+        ),
+        height=130,
+        key="td_text",
+    )
+
+    _td_run = st.button(
+        "🎨  Generate Diagram",
+        type="primary",
+        use_container_width=True,
+        key="td_gen",
+        disabled=not bool(st.session_state.get("td_text", "").strip()),
+    )
+
+    if _td_run and st.session_state.get("td_text", "").strip():
+        _tdv       = st.session_state["td_text"].strip()
+        _td_gkey   = _cfg("google_key", os.environ.get("GOOGLE_API_KEY", ""))
+        _td_outdir = _cfg("output_dir", _DEFAULT_OUTPUT)
+
+        # ── PaperBanana ───────────────────────────────────────────────────────
+        if _td_m == "paperbanana":
+            from research_analyser.models import ExtractedContent as _TdEC, Section as _TdSec  # noqa: PLC0415
+            from research_analyser.diagram_generator import DiagramGenerator as _TdDG  # noqa: PLC0415
+            import asyncio as _td_aio  # noqa: PLC0415
+
+            _td_pb_dtype = _pb_type_map.get(
+                st.session_state.get("td_pb_dtype", "📐 Methodology"), "methodology"
+            )
+            _td_ec = _TdEC(
+                full_text=_tdv,
+                title="Custom Diagram",
+                authors=[],
+                abstract=_tdv,
+                sections=[_TdSec(title="Description", level=1, content=_tdv)],
+                equations=[], tables=[], figures=[], references=[],
+            )
+            if _td_gkey:
+                os.environ["GOOGLE_API_KEY"] = _td_gkey
+            _td_dg = _TdDG(
+                provider=_cfg("diagram_provider", "gemini"),
+                vlm_model=_cfg("vlm_model", "gemini-2.0-flash"),
+                image_model=_cfg("image_model", "gemini-3-pro-image-preview"),
+                output_dir=os.path.join(_td_outdir, "diagrams", "custom"),
+            )
+            with st.spinner("PaperBanana: generating diagram…"):
+                try:
+                    _td_diags = _td_aio.run(_td_dg.generate(_td_ec, [_td_pb_dtype]))
+                    if _td_diags:
+                        _td_d = _td_diags[0]
+                        if _td_d.image_path and Path(_td_d.image_path).exists():
+                            st.image(_td_d.image_path,
+                                     caption=f"PaperBanana · {_td_pb_dtype}",
+                                     use_container_width=True)
+                            with open(_td_d.image_path, "rb") as _fh:
+                                st.download_button(
+                                    "⬇  Download PNG", _fh.read(),
+                                    file_name=f"diagram_{_td_pb_dtype}.png",
+                                    mime="image/png",
+                                )
+                        else:
+                            st.error(f"PaperBanana produced no image. {getattr(_td_d, 'error', '')}")
+                    else:
+                        st.warning("PaperBanana returned no diagrams.")
+                except Exception as _tde:
+                    st.error(f"PaperBanana failed: {_tde}")
+                    if not _td_gkey:
+                        st.info("💡 Set your Google API key in ⚙ Configuration.")
+
+        # ── LLM-based open-source renderers (Mermaid / Graphviz / Matplotlib) ─
+        else:
+            if not _td_gkey:
+                st.error("Google API key required for LLM-based diagram generation.  "
+                         "Set it in ⚙ Configuration.")
+            else:
+                import re as _td_re  # noqa: PLC0415
+
+                def _td_llm(prompt: str) -> str:
+                    """Call Gemini 2.0 Flash; try new google-genai SDK first."""
+                    try:
+                        from google import genai as _gai  # noqa: PLC0415
+                        return _gai.Client(api_key=_td_gkey).models.generate_content(
+                            model="gemini-2.0-flash", contents=prompt
+                        ).text.strip()
+                    except Exception:
+                        import google.generativeai as _ogai  # noqa: PLC0415
+                        _ogai.configure(api_key=_td_gkey)
+                        return _ogai.GenerativeModel("gemini-2.0-flash").generate_content(
+                            prompt
+                        ).text.strip()
+
+                def _td_strip(code: str, lang: str = "") -> str:
+                    code = _td_re.sub(rf"^```{lang}\s*", "", code, flags=_td_re.MULTILINE)
+                    return _td_re.sub(r"```\s*$", "", code, flags=_td_re.MULTILINE).strip()
+
+                # ── Mermaid ───────────────────────────────────────────────────
+                if _td_m == "mermaid":
+                    _mtype = st.session_state.get("td_mtype", "flowchart")
+                    _td_prompt = (
+                        f"Write a Mermaid '{_mtype}' diagram for the description below.\n"
+                        "Return ONLY the raw Mermaid code — no explanation, no markdown fences.\n\n"
+                        + _tdv
+                    )
+                    with st.spinner("Generating Mermaid diagram via Gemini…"):
+                        try:
+                            _td_code = _td_strip(_td_llm(_td_prompt), "mermaid")
+                            _td_html = (
+                                "<!DOCTYPE html><html><head>"
+                                '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>'
+                                "<style>"
+                                "body{background:#0d1117;margin:0;display:flex;"
+                                "justify-content:center;padding:24px}"
+                                ".mermaid{background:#161b22;padding:24px;"
+                                "border-radius:10px;max-width:100%}"
+                                "</style></head><body>"
+                                f'<div class="mermaid">{_td_code}</div>'
+                                "<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>"
+                                "</body></html>"
+                            )
+                            st.components.v1.html(_td_html, height=520, scrolling=True)
+                            with st.expander("📋 Mermaid code"):
+                                st.code(_td_code, language="text")
+                        except Exception as _tde:
+                            st.error(f"Mermaid generation failed: {_tde}")
+
+                # ── Graphviz ──────────────────────────────────────────────────
+                elif _td_m == "graphviz":
+                    _gvdir = st.session_state.get("td_gvdir", "LR (left→right)").split(" ")[0]
+                    _td_prompt = (
+                        "Write a Graphviz DOT digraph for the description below.  "
+                        f"Set rankdir={_gvdir} in the graph attributes.  "
+                        "Use clean, readable node labels.  "
+                        "Return ONLY the raw DOT code — no explanation, no markdown fences.\n\n"
+                        + _tdv
+                    )
+                    with st.spinner("Generating Graphviz diagram via Gemini…"):
+                        try:
+                            _td_code = _td_strip(_td_llm(_td_prompt), r"(?:dot|graphviz)")
+                            st.graphviz_chart(_td_code, use_container_width=True)
+                            with st.expander("📋 DOT code"):
+                                st.code(_td_code, language="dot")
+                        except Exception as _tde:
+                            st.error(f"Graphviz generation failed: {_tde}")
+
+                # ── Matplotlib ────────────────────────────────────────────────
+                elif _td_m == "matplotlib":
+                    _td_prompt = (
+                        "Write Python matplotlib code to visualise the description below.\n"
+                        "Strict rules:\n"
+                        "• Import ONLY matplotlib.pyplot as plt and numpy as np\n"
+                        "• First line after imports: plt.style.use('dark_background')\n"
+                        "• Do NOT call plt.show() or plt.savefig()\n"
+                        "• Do NOT open files or use subprocess or os\n"
+                        "• End with plt.tight_layout()\n"
+                        "Return ONLY the Python code — no explanation, no markdown fences.\n\n"
+                        + _tdv
+                    )
+                    with st.spinner("Generating Matplotlib figure via Gemini…"):
+                        _td_code = ""
+                        try:
+                            _td_code = _td_strip(_td_llm(_td_prompt), "python")
+                            import matplotlib as _td_mpl  # noqa: PLC0415
+                            _td_mpl.use("Agg")
+                            import matplotlib.pyplot as _td_plt  # noqa: PLC0415
+                            import numpy as _td_np  # noqa: PLC0415
+                            import io as _td_io  # noqa: PLC0415
+                            import builtins as _td_bi  # noqa: PLC0415
+                            _safe_bi = {k: getattr(_td_bi, k) for k in (
+                                "range", "len", "enumerate", "zip", "list", "dict",
+                                "str", "int", "float", "round", "min", "max", "sum",
+                                "sorted", "print", "isinstance", "type", "tuple",
+                                "bool", "abs", "any", "all",
+                            )}
+                            _td_plt.close("all")
+                            exec(_td_code, {"plt": _td_plt, "np": _td_np, "__builtins__": _safe_bi})  # noqa: S102
+                            _td_buf = _td_io.BytesIO()
+                            _td_plt.savefig(_td_buf, format="png", dpi=150, bbox_inches="tight")
+                            _td_buf.seek(0)
+                            st.image(_td_buf, use_container_width=True)
+                            _td_plt.close("all")
+                            with st.expander("📋 Matplotlib code"):
+                                st.code(_td_code, language="python")
+                        except Exception as _tde:
+                            st.error(f"Matplotlib generation failed: {_tde}")
+                            if _td_code:
+                                with st.expander("📋 Generated code (with error)"):
+                                    st.code(_td_code, language="python")
+
+
 # ── Page: Server Management ───────────────────────────────────────────────────
 
 def show_server_management() -> None:
@@ -835,6 +1106,7 @@ if "nav_page" not in st.session_state:
 
 _NAV = [
     ("📄  Analyse Paper",    "analyse"),
+    ("🎨  Text to Diagrams", "diagrams"),
     ("⚙️  Configuration",     "config"),
     ("🖥️  Server Management", "server"),
 ]
@@ -890,6 +1162,9 @@ if _page == "server":
     st.stop()
 if _page == "config":
     show_configuration()
+    st.stop()
+if _page == "diagrams":
+    show_text_to_diagrams()
     st.stop()
 
 # ── Page: Analyse Paper ───────────────────────────────────────────────────────
@@ -1742,277 +2017,6 @@ if ext_file is not None:
     except Exception as e:
         st.error(f"Comparison failed: {e}")
         st.exception(e)
-
-# ── Text to Diagrams ──────────────────────────────────────────────────────────
-st.divider()
-st.markdown('<p class="sec-label">Text to Diagrams</p>', unsafe_allow_html=True)
-
-_TD_MODELS = {
-    "PaperBanana": "paperbanana",
-    "Mermaid (via Gemini)": "mermaid",
-    "Graphviz DOT (via Gemini)": "graphviz",
-    "Matplotlib (via Gemini)": "matplotlib",
-}
-_TD_MODEL_CAPS = {
-    "paperbanana": (
-        "**PaperBanana** — Critic–Visualiser pipeline generates publication-quality research diagram images.  "
-        "Requires Google API key.  "
-        "[github.com/llmsresearch/paperbanana](https://github.com/llmsresearch/paperbanana)"
-    ),
-    "mermaid": (
-        "**Mermaid** — LLM writes Mermaid DSL (flowcharts, sequences, class diagrams, Gantt, mindmaps).  "
-        "Rendered client-side via Mermaid.js.  "
-        "[mermaid.js.org](https://mermaid.js.org)"
-    ),
-    "graphviz": (
-        "**Graphviz** — LLM writes DOT language (directed/undirected graphs, cluster layouts).  "
-        "Rendered with `st.graphviz_chart()`.  "
-        "[graphviz.org](https://graphviz.org)"
-    ),
-    "matplotlib": (
-        "**Matplotlib** — LLM writes Python plotting code executed in a sandboxed namespace.  "
-        "Best for data charts, bar graphs, and scientific figures.  "
-        "[matplotlib.org](https://matplotlib.org)"
-    ),
-}
-
-with st.container(border=True):
-    st.markdown(
-        '<div class="cfg-hdr"><div class="cfg-icon cfg-icon-diag">🎨</div>'
-        'Generate Diagram from Text</div>',
-        unsafe_allow_html=True,
-    )
-
-    _td_c1, _td_c2 = st.columns([3, 2])
-    with _td_c1:
-        _td_model_label = st.selectbox(
-            "Model",
-            list(_TD_MODELS.keys()),
-            index=0,
-            key="td_model",
-            help="PaperBanana (default) produces the highest-quality research diagrams.",
-        )
-    _td_m = _TD_MODELS[_td_model_label]
-
-    with _td_c2:
-        if _td_m == "paperbanana":
-            _pb_type_map = {
-                "📐 Methodology": "methodology",
-                "🏗️ Architecture": "architecture",
-                "📈 Results": "results",
-            }
-            st.selectbox("Diagram type", list(_pb_type_map.keys()), key="td_pb_dtype")
-        elif _td_m == "mermaid":
-            st.selectbox(
-                "Mermaid subtype (hint)",
-                ["flowchart", "sequenceDiagram", "classDiagram", "erDiagram", "gantt", "mindmap"],
-                key="td_mtype",
-                help="Hint for the LLM — it may override based on your description.",
-            )
-        elif _td_m == "graphviz":
-            st.selectbox(
-                "Graph direction",
-                ["LR (left→right)", "TB (top→bottom)", "RL (right→left)", "BT (bottom→top)"],
-                key="td_gvdir",
-            )
-        else:
-            st.write("")
-
-    st.caption(_TD_MODEL_CAPS[_td_m])
-
-    _td_text = st.text_area(
-        "Describe the diagram",
-        placeholder=(
-            "Describe the system, process, or data to visualise.\n\n"
-            "Examples:\n"
-            "• Multi-stage pipeline: PDF → OCR → parallel diagram generation and peer review → AnalysisReport\n"
-            "• Encoder–decoder transformer with cross-attention and positional encodings\n"
-            "• Bar chart: PSNR scores — Ours 32.1 dB, NeRF 30.4 dB, Gaussian Splatting 31.2 dB"
-        ),
-        height=130,
-        key="td_text",
-    )
-
-    _td_run = st.button(
-        "🎨  Generate Diagram",
-        type="primary",
-        use_container_width=True,
-        key="td_gen",
-        disabled=not bool(st.session_state.get("td_text", "").strip()),
-    )
-
-if _td_run and st.session_state.get("td_text", "").strip():
-    _tdv       = st.session_state["td_text"].strip()
-    _td_gkey   = _cfg("google_key", os.environ.get("GOOGLE_API_KEY", ""))
-    _td_outdir = _cfg("output_dir", _DEFAULT_OUTPUT)
-
-    # ── PaperBanana ───────────────────────────────────────────────────────────
-    if _td_m == "paperbanana":
-        from research_analyser.models import ExtractedContent as _TdEC, Section as _TdSec  # noqa: PLC0415
-        from research_analyser.diagram_generator import DiagramGenerator as _TdDG  # noqa: PLC0415
-        import asyncio as _td_aio  # noqa: PLC0415
-
-        _td_pb_dtype = _pb_type_map.get(
-            st.session_state.get("td_pb_dtype", "📐 Methodology"), "methodology"
-        )
-        _td_ec = _TdEC(
-            full_text=_tdv,
-            title="Custom Diagram",
-            authors=[],
-            abstract=_tdv,
-            sections=[_TdSec(title="Description", level=1, content=_tdv)],
-            equations=[], tables=[], figures=[], references=[],
-        )
-        if _td_gkey:
-            os.environ["GOOGLE_API_KEY"] = _td_gkey
-        _td_dg = _TdDG(
-            provider=_cfg("diagram_provider", "gemini"),
-            vlm_model=_cfg("vlm_model", "gemini-2.0-flash"),
-            image_model=_cfg("image_model", "gemini-3-pro-image-preview"),
-            output_dir=os.path.join(_td_outdir, "diagrams", "custom"),
-        )
-        with st.spinner("PaperBanana: generating diagram…"):
-            try:
-                _td_diags = _td_aio.run(_td_dg.generate(_td_ec, [_td_pb_dtype]))
-                if _td_diags:
-                    _td_d = _td_diags[0]
-                    if _td_d.image_path and Path(_td_d.image_path).exists():
-                        st.image(_td_d.image_path,
-                                 caption=f"PaperBanana · {_td_pb_dtype}",
-                                 use_container_width=True)
-                        with open(_td_d.image_path, "rb") as _fh:
-                            st.download_button(
-                                "⬇  Download PNG", _fh.read(),
-                                file_name=f"diagram_{_td_pb_dtype}.png",
-                                mime="image/png",
-                            )
-                    else:
-                        st.error(f"PaperBanana produced no image. {getattr(_td_d, 'error', '')}")
-                else:
-                    st.warning("PaperBanana returned no diagrams.")
-            except Exception as _tde:
-                st.error(f"PaperBanana failed: {_tde}")
-                if not _td_gkey:
-                    st.info("💡 Set your Google API key in ⚙ Configuration.")
-
-    # ── LLM-based open-source renderers (Mermaid / Graphviz / Matplotlib) ────
-    else:
-        if not _td_gkey:
-            st.error("Google API key required for LLM-based diagram generation.  "
-                     "Set it in ⚙ Configuration.")
-        else:
-            import re as _td_re  # noqa: PLC0415
-
-            def _td_llm(prompt: str) -> str:
-                """Call Gemini 2.0 Flash; try new google-genai SDK first."""
-                try:
-                    from google import genai as _gai  # noqa: PLC0415
-                    return _gai.Client(api_key=_td_gkey).models.generate_content(
-                        model="gemini-2.0-flash", contents=prompt
-                    ).text.strip()
-                except Exception:
-                    import google.generativeai as _ogai  # noqa: PLC0415
-                    _ogai.configure(api_key=_td_gkey)
-                    return _ogai.GenerativeModel("gemini-2.0-flash").generate_content(
-                        prompt
-                    ).text.strip()
-
-            def _td_strip(code: str, lang: str = "") -> str:
-                code = _td_re.sub(rf"^```{lang}\s*", "", code, flags=_td_re.MULTILINE)
-                return _td_re.sub(r"```\s*$", "", code, flags=_td_re.MULTILINE).strip()
-
-            # ── Mermaid ───────────────────────────────────────────────────────
-            if _td_m == "mermaid":
-                _mtype = st.session_state.get("td_mtype", "flowchart")
-                _td_prompt = (
-                    f"Write a Mermaid '{_mtype}' diagram for the description below.\n"
-                    "Return ONLY the raw Mermaid code — no explanation, no markdown fences.\n\n"
-                    + _tdv
-                )
-                with st.spinner("Generating Mermaid diagram via Gemini…"):
-                    try:
-                        _td_code = _td_strip(_td_llm(_td_prompt), "mermaid")
-                        _td_html = (
-                            "<!DOCTYPE html><html><head>"
-                            '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>'
-                            "<style>"
-                            "body{background:#0d1117;margin:0;display:flex;"
-                            "justify-content:center;padding:24px}"
-                            ".mermaid{background:#161b22;padding:24px;"
-                            "border-radius:10px;max-width:100%}"
-                            "</style></head><body>"
-                            f'<div class="mermaid">{_td_code}</div>'
-                            "<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>"
-                            "</body></html>"
-                        )
-                        st.components.v1.html(_td_html, height=520, scrolling=True)
-                        with st.expander("📋 Mermaid code"):
-                            st.code(_td_code, language="text")
-                    except Exception as _tde:
-                        st.error(f"Mermaid generation failed: {_tde}")
-
-            # ── Graphviz ──────────────────────────────────────────────────────
-            elif _td_m == "graphviz":
-                _gvdir = st.session_state.get("td_gvdir", "LR (left→right)").split(" ")[0]
-                _td_prompt = (
-                    "Write a Graphviz DOT digraph for the description below.  "
-                    f"Set rankdir={_gvdir} in the graph attributes.  "
-                    "Use clean, readable node labels.  "
-                    "Return ONLY the raw DOT code — no explanation, no markdown fences.\n\n"
-                    + _tdv
-                )
-                with st.spinner("Generating Graphviz diagram via Gemini…"):
-                    try:
-                        _td_code = _td_strip(_td_llm(_td_prompt), r"(?:dot|graphviz)")
-                        st.graphviz_chart(_td_code, use_container_width=True)
-                        with st.expander("📋 DOT code"):
-                            st.code(_td_code, language="dot")
-                    except Exception as _tde:
-                        st.error(f"Graphviz generation failed: {_tde}")
-
-            # ── Matplotlib ────────────────────────────────────────────────────
-            elif _td_m == "matplotlib":
-                _td_prompt = (
-                    "Write Python matplotlib code to visualise the description below.\n"
-                    "Strict rules:\n"
-                    "• Import ONLY matplotlib.pyplot as plt and numpy as np\n"
-                    "• First line after imports: plt.style.use('dark_background')\n"
-                    "• Do NOT call plt.show() or plt.savefig()\n"
-                    "• Do NOT open files or use subprocess or os\n"
-                    "• End with plt.tight_layout()\n"
-                    "Return ONLY the Python code — no explanation, no markdown fences.\n\n"
-                    + _tdv
-                )
-                with st.spinner("Generating Matplotlib figure via Gemini…"):
-                    _td_code = ""
-                    try:
-                        _td_code = _td_strip(_td_llm(_td_prompt), "python")
-                        import matplotlib as _td_mpl  # noqa: PLC0415
-                        _td_mpl.use("Agg")
-                        import matplotlib.pyplot as _td_plt  # noqa: PLC0415
-                        import numpy as _td_np  # noqa: PLC0415
-                        import io as _td_io  # noqa: PLC0415
-                        import builtins as _td_bi  # noqa: PLC0415
-                        _safe_bi = {k: getattr(_td_bi, k) for k in (
-                            "range", "len", "enumerate", "zip", "list", "dict",
-                            "str", "int", "float", "round", "min", "max", "sum",
-                            "sorted", "print", "isinstance", "type", "tuple",
-                            "bool", "abs", "any", "all",
-                        )}
-                        _td_plt.close("all")
-                        exec(_td_code, {"plt": _td_plt, "np": _td_np, "__builtins__": _safe_bi})  # noqa: S102
-                        _td_buf = _td_io.BytesIO()
-                        _td_plt.savefig(_td_buf, format="png", dpi=150, bbox_inches="tight")
-                        _td_buf.seek(0)
-                        st.image(_td_buf, use_container_width=True)
-                        _td_plt.close("all")
-                        with st.expander("📋 Matplotlib code"):
-                            st.code(_td_code, language="python")
-                    except Exception as _tde:
-                        st.error(f"Matplotlib generation failed: {_tde}")
-                        if _td_code:
-                            with st.expander("📋 Generated code (with error)"):
-                                st.code(_td_code, language="python")
 
 # ── Late CSS override (injected last so it beats Streamlit component CSS) ──────
 st.markdown("""
