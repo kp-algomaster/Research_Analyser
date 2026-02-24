@@ -41,6 +41,49 @@ logging.basicConfig(level=logging.INFO)
 _NATIVE_APP = os.environ.get("RA_NATIVE_APP") == "1"
 
 
+def _native_save_as(data, file_name: str) -> None:
+    """Open a macOS Save-As sheet via AppleScript, write to the chosen path.
+
+    Runs `osascript` in a subprocess (safe from any thread).  The dialog is a
+    native NSSavePanel so the user picks both folder and file name.
+    Falls back to ~/Downloads/ if the dialog is cancelled or osascript fails.
+    """
+    script = (
+        f'tell application "System Events"\n'
+        f'  set f to choose file name '
+        f'with prompt "Save {file_name}" '
+        f'default name "{file_name}"\n'
+        f'  return POSIX path of f\n'
+        f'end tell'
+    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            save_path = Path(result.stdout.strip())
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            if isinstance(data, str):
+                save_path.write_text(data, encoding="utf-8")
+            else:
+                save_path.write_bytes(data)
+            st.success(f"Saved → `{save_path}`")
+            return
+        # User cancelled the dialog — do nothing
+        st.info("Save cancelled.")
+    except subprocess.TimeoutExpired:
+        st.warning("Save dialog timed out — no file was written.")
+    except Exception as exc:
+        # Hard fallback: ~/Downloads/ without dialog
+        fallback = Path.home() / "Downloads" / file_name
+        if isinstance(data, str):
+            fallback.write_text(data, encoding="utf-8")
+        else:
+            fallback.write_bytes(data)
+        st.success(f"Saved to `~/Downloads/{file_name}`  *(dialog unavailable: {exc})*")
+
+
 def _dl_button(
     label: str,
     data,
@@ -49,10 +92,14 @@ def _dl_button(
     use_container_width: bool = False,
     key: str | None = None,
 ) -> None:
-    """Download button that works in both browser and native pywebview app.
+    """Download / Save button.
 
-    Uses application/octet-stream by default so browsers always download
-    the file rather than opening it in a new tab / full-screen viewer.
+    Browser mode  — st.download_button with application/octet-stream so the
+                    browser always shows its own Save dialog (never opens the
+                    file inline or full-screen).
+    Native app    — macOS Save-As sheet (NSSavePanel via osascript) so the
+                    user picks the folder before the file is written.
+                    No file is opened after saving.
     """
     if not _NATIVE_APP:
         st.download_button(
@@ -60,21 +107,12 @@ def _dl_button(
             use_container_width=use_container_width, key=key,
         )
         return
-    # Native app: save directly to ~/Downloads/ on click
+    # Native app: open macOS Save-As dialog, then write the file there.
     btn_kwargs: dict = {"use_container_width": use_container_width}
     if key:
         btn_kwargs["key"] = key
     if st.button(label, **btn_kwargs):
-        save_path = Path.home() / "Downloads" / file_name
-        if isinstance(data, str):
-            save_path.write_text(data, encoding="utf-8")
-        else:
-            save_path.write_bytes(data)
-        st.success(f"Saved to `~/Downloads/{file_name}`")
-        try:
-            subprocess.call(["open", "-R", str(save_path)])
-        except Exception:
-            pass
+        _native_save_as(data, file_name)
 
 
 def _view_dl_buttons(
@@ -104,7 +142,7 @@ def _view_dl_buttons(
             st.rerun()
     with d_col:
         _dl_button(
-            "⬇  Download", data, file_name=file_name,
+            "⬇  Save / Download", data, file_name=file_name,
             mime="application/octet-stream",
             use_container_width=True, key=f"_dl_{_key}",
         )
@@ -184,6 +222,25 @@ st.markdown("""
 [data-testid="stSidebar"] .stCaption {
     color: #8b949e !important;
     font-size: 12px !important;
+}
+
+/* ── File viewer toolbar ── */
+.vw-toolbar {
+    display: flex; align-items: center; gap: 14px;
+    background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+    padding: 10px 16px; margin-bottom: 18px;
+}
+.vw-back-arrow {
+    font-size: 20px; color: #58a6ff; cursor: pointer;
+    line-height: 1; flex-shrink: 0;
+}
+.vw-filename {
+    font-size: 14px; font-weight: 700; color: #e6edf3;
+    flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vw-badge {
+    font-size: 11px; color: #8b949e; background: #21262d;
+    border-radius: 99px; padding: 2px 8px; flex-shrink: 0;
 }
 
 /* ── Page hero ── */
@@ -1728,36 +1785,46 @@ output_dir = st.session_state.get("last_output_dir", _cfg("output_dir", _DEFAULT
 if report:
     # ── Inline file viewer (full-page, replaces results tabs) ─────────────────
     if st.session_state.get("_file_viewer"):
-        _vw = st.session_state["_file_viewer"]
-        _vw_back, _vw_title = st.columns([1, 6])
-        with _vw_back:
-            if st.button("← Back to Home", key="_vw_back_btn"):
-                del st.session_state["_file_viewer"]
-                st.rerun()
-        with _vw_title:
-            st.markdown(
-                f'<p style="font-size:15px;font-weight:700;color:#e6edf3;margin:6px 0 0 0">'
-                f'{_vw["label"]}</p>',
-                unsafe_allow_html=True,
-            )
-        st.divider()
+        _vw     = st.session_state["_file_viewer"]
         _vw_data = _vw["data"]
         _vw_ct   = _vw["content_type"]
+        _vw_fn   = _vw["file_name"]
+        _vw_lbl  = _vw["label"]
+
+        # ── Toolbar row: back arrow | filename | badge | download ──────────────
+        _ext_badge = _vw_fn.rsplit(".", 1)[-1].upper() if "." in _vw_fn else "FILE"
+        _tb_left, _tb_right = st.columns([5, 1])
+        with _tb_left:
+            st.markdown(
+                f'<div class="vw-toolbar">'
+                f'<span class="vw-back-arrow">&#8592;</span>'
+                f'<span class="vw-filename">{_vw_lbl}</span>'
+                f'<span class="vw-badge">{_ext_badge}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with _tb_right:
+            if st.button("← Back", key="_vw_back_btn", use_container_width=True):
+                del st.session_state["_file_viewer"]
+                st.rerun()
+
+        # ── Content ────────────────────────────────────────────────────────────
         _vw_text = _vw_data if isinstance(_vw_data, str) else _vw_data.decode("utf-8", errors="replace")
-        if _vw_ct == "markdown":
-            st.markdown(_vw_text)
-        elif _vw_ct == "json":
-            st.code(_vw_text, language="json")
-        elif _vw_ct == "audio":
-            st.audio(_vw_data, format="audio/wav")
-        else:
-            st.text(_vw_text)
-        # Also offer download from inside the viewer
-        st.divider()
+        with st.container(border=True):
+            if _vw_ct == "markdown":
+                st.markdown(_vw_text)
+            elif _vw_ct == "json":
+                st.code(_vw_text, language="json")
+            elif _vw_ct == "audio":
+                st.audio(_vw_data, format="audio/wav")
+            else:
+                st.text(_vw_text)
+
+        # ── Download from inside viewer ────────────────────────────────────────
         _dl_button(
-            f"⬇  Download {_vw['file_name']}", _vw_data,
-            file_name=_vw["file_name"], mime="application/octet-stream",
-            key="_vw_inline_dl",
+            f"⬇  Save / Download  {_vw_fn}", _vw_data,
+            file_name=_vw_fn, mime="application/octet-stream",
+            use_container_width=True, key="_vw_inline_dl",
         )
         st.stop()
 
