@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+
+try:
+    from sse_starlette.sse import EventSourceResponse
+    _SSE_AVAILABLE = True
+except ImportError:
+    _SSE_AVAILABLE = False
 
 from research_analyser.analyser import ResearchAnalyser
 from research_analyser.config import Config
@@ -149,3 +156,105 @@ async def extract_only(
 
     report = await analyser.analyse(paper_source, options=options)
     return report.to_json()
+
+
+# ---------------------------------------------------------------------------
+# VS Code Extension-compatible endpoints
+# ---------------------------------------------------------------------------
+
+# Shared storage for the last completed report (in-memory, single-user)
+_last_report: Optional[dict] = None
+
+
+class VSCodeAnalyseRequest(BaseModel):
+    source: str
+    options: Optional[dict] = None
+
+
+@app.get("/health")
+async def health():
+    """VS Code extension health check."""
+    return {"status": "ok"}
+
+
+@app.get("/report/latest")
+async def get_latest_report():
+    """Return the most recent analysis report (for VS Code extension auto-load)."""
+    if _last_report is None:
+        raise HTTPException(status_code=404, detail="No report available")
+    return _last_report
+
+
+@app.post("/analyse")
+async def analyse_blocking(req: VSCodeAnalyseRequest):
+    """Run analysis and return the full report (blocking, 300 s budget)."""
+    global _last_report
+    options = AnalysisOptions(
+        generate_diagrams=req.options.get("generate_diagrams", True) if req.options else True,
+        generate_review=req.options.get("generate_review", True) if req.options else True,
+        generate_audio=req.options.get("generate_audio", False) if req.options else False,
+    )
+    try:
+        report = await analyser.analyse(req.source, options=options)
+        _last_report = report.to_json()
+        return _last_report
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/analyse/stream")
+async def analyse_stream(req: VSCodeAnalyseRequest):
+    """Run analysis with Server-Sent Events progress stream (VS Code extension)."""
+    if not _SSE_AVAILABLE:
+        raise HTTPException(
+            status_code=501,
+            detail="SSE streaming not available. Install sse-starlette: pip install sse-starlette",
+        )
+
+    global _last_report
+    options = AnalysisOptions(
+        generate_diagrams=req.options.get("generate_diagrams", True) if req.options else True,
+        generate_review=req.options.get("generate_review", True) if req.options else True,
+        generate_audio=req.options.get("generate_audio", False) if req.options else False,
+    )
+
+    async def generate() -> AsyncGenerator[dict, None]:
+        global _last_report
+        try:
+            # Emit initial progress
+            yield {
+                "event": "progress",
+                "data": json.dumps({"pct": 5, "message": "Starting analysis…"}),
+            }
+
+            # Run analysis (no streaming inside analyser yet — emit milestones)
+            yield {
+                "event": "progress",
+                "data": json.dumps({"pct": 10, "message": "Downloading / loading paper…"}),
+            }
+
+            report = await analyser.analyse(req.source, options=options)
+            _last_report = report.to_json()
+
+            yield {
+                "event": "progress",
+                "data": json.dumps({"pct": 95, "message": "Finalising report…"}),
+            }
+
+            yield {"event": "complete", "data": json.dumps(_last_report)}
+        except Exception as exc:
+            logger.error("SSE analysis failed: %s", exc)
+            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+
+    return EventSourceResponse(generate())
+
+
+@app.get("/equations")
+async def get_equations():
+    """Return equations from the latest report (without loading the full report)."""
+    if _last_report is None:
+        raise HTTPException(status_code=404, detail="No report available")
+    equations = (
+        _last_report.get("extracted_content", {}).get("equations", [])
+    )
+    return equations

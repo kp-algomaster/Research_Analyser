@@ -37,6 +37,7 @@ pywebview>=5.0        # Native macOS window wrapper (bundled app only)
 fastapi>=0.100
 uvicorn[standard]>=0.24
 python-multipart>=0.0.6
+sse-starlette>=1.6  # SSE streaming for VS Code extension /analyse/stream endpoint
 
 # Utilities
 rich>=13.0             # CLI output formatting

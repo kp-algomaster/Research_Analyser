@@ -289,9 +289,14 @@ class ResearchAnalyser:
 
         # 4. Full-text at offset (beyond abstract area)
         if content.full_text and len(content.full_text) > 1000:
-            return content.full_text[1000:1500].strip()
+            chunk = content.full_text[1000:1500].strip()
+            # Skip if it's just page-marker lines
+            lines = [l for l in chunk.splitlines() if not l.strip().startswith("## Page")]
+            chunk = " ".join(lines).strip()
+            if chunk and _distinct(chunk):
+                return chunk
 
-        return abstract[:500] if abstract else ""
+        return ""
 
     def _extract_results_summary(self, content) -> str:
         """Extract results summary from sections.
@@ -341,11 +346,19 @@ class ResearchAnalyser:
                 if _distinct(text):
                     return text
 
-        # 4. Full-text from latter portion
+        # 4. Full-text from latter portion — strip page-marker lines before returning
+        def _clean(chunk: str) -> str:
+            lines = [l for l in chunk.splitlines() if not l.strip().startswith("## Page")]
+            return " ".join(lines).strip()
+
         if content.full_text and len(content.full_text) > 2000:
-            return content.full_text[-1500:-1000].strip()
+            chunk = _clean(content.full_text[-1500:-1000])
+            if chunk and _distinct(chunk):
+                return chunk
         if content.full_text and len(content.full_text) > 500:
-            return content.full_text[-500:].strip()
+            chunk = _clean(content.full_text[-500:])
+            if chunk and _distinct(chunk):
+                return chunk
 
         return ""
 
