@@ -41,47 +41,31 @@ logging.basicConfig(level=logging.INFO)
 _NATIVE_APP = os.environ.get("RA_NATIVE_APP") == "1"
 
 
-def _native_save_as(data, file_name: str) -> None:
-    """Open a macOS Save-As sheet via AppleScript, write to the chosen path.
+def _native_save_as(data, file_name: str, key_suffix: str = "") -> None:
+    """Save a file to ~/Downloads/ in the native macOS app.
 
-    Runs `osascript` in a subprocess (safe from any thread).  The dialog is a
-    native NSSavePanel so the user picks both folder and file name.
-    Falls back to ~/Downloads/ if the dialog is cancelled or osascript fails.
+    The osascript NSSavePanel approach is not used here because the dialog runs
+    in a subprocess that appears *behind* the fullscreen pywebview window, making
+    it invisible to the user.  Instead we save directly to ~/Downloads/ — a
+    predictable, always-writable location — and offer a "Show in Finder" button
+    so the user can immediately see and move the file.
     """
-    script = (
-        f'tell application "System Events"\n'
-        f'  set f to choose file name '
-        f'with prompt "Save {file_name}" '
-        f'default name "{file_name}"\n'
-        f'  return POSIX path of f\n'
-        f'end tell'
-    )
+    save_path = Path.home() / "Downloads" / file_name
     try:
-        result = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            save_path = Path(result.stdout.strip())
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            if isinstance(data, str):
-                save_path.write_text(data, encoding="utf-8")
-            else:
-                save_path.write_bytes(data)
-            st.success(f"Saved → `{save_path}`")
-            return
-        # User cancelled the dialog — do nothing
-        st.info("Save cancelled.")
-    except subprocess.TimeoutExpired:
-        st.warning("Save dialog timed out — no file was written.")
-    except Exception as exc:
-        # Hard fallback: ~/Downloads/ without dialog
-        fallback = Path.home() / "Downloads" / file_name
         if isinstance(data, str):
-            fallback.write_text(data, encoding="utf-8")
+            save_path.write_text(data, encoding="utf-8")
         else:
-            fallback.write_bytes(data)
-        st.success(f"Saved to `~/Downloads/{file_name}`  *(dialog unavailable: {exc})*")
+            save_path.write_bytes(data)
+    except Exception as exc:
+        st.error(f"Could not save file: {exc}")
+        return
+
+    st.success(f"Saved to **~/Downloads/{file_name}**")
+    if st.button("📂  Show in Finder", key=f"_reveal_{key_suffix or file_name}"):
+        try:
+            subprocess.Popen(["open", "-R", str(save_path)])
+        except Exception:
+            pass
 
 
 def _dl_button(
@@ -95,11 +79,11 @@ def _dl_button(
     """Download / Save button.
 
     Browser mode  — st.download_button with application/octet-stream so the
-                    browser always shows its own Save dialog (never opens the
-                    file inline or full-screen).
-    Native app    — macOS Save-As sheet (NSSavePanel via osascript) so the
-                    user picks the folder before the file is written.
-                    No file is opened after saving.
+                    browser always shows its own Save dialog.
+    Native app    — saves directly to ~/Downloads/ (osascript dialog is not
+                    used because it appears behind the fullscreen pywebview
+                    window and is invisible).  A "Show in Finder" button
+                    appears after saving so the user can locate the file.
     """
     if not _NATIVE_APP:
         st.download_button(
@@ -107,12 +91,12 @@ def _dl_button(
             use_container_width=use_container_width, key=key,
         )
         return
-    # Native app: open macOS Save-As dialog, then write the file there.
+    # Native app: save to ~/Downloads/ and offer Finder reveal.
     btn_kwargs: dict = {"use_container_width": use_container_width}
     if key:
         btn_kwargs["key"] = key
     if st.button(label, **btn_kwargs):
-        _native_save_as(data, file_name)
+        _native_save_as(data, file_name, key_suffix=key or file_name)
 
 
 def _view_dl_buttons(
