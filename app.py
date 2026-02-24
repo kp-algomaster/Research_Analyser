@@ -823,9 +823,14 @@ def show_text_to_diagrams() -> None:
                                 "<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>"
                                 "</body></html>"
                             )
-                            st.components.v1.html(_td_html, height=520, scrolling=True)
-                            with st.expander("📋 Mermaid code"):
-                                st.code(_td_code, language="text")
+                            # Cache so the diagram survives subsequent reruns
+                            st.session_state["_td_last_diagram"] = {
+                                "kind": "mermaid_html",
+                                "html": _td_html,
+                                "code": _td_code,
+                                "caption": f"Mermaid · {_mtype}",
+                                "file_name": f"diagram_{_mtype}.mmd",
+                            }
                         except Exception as _tde:
                             st.error(f"Mermaid generation failed: {_tde}")
 
@@ -842,9 +847,13 @@ def show_text_to_diagrams() -> None:
                     with st.spinner("Generating Graphviz diagram via Gemini…"):
                         try:
                             _td_code = _td_strip(_td_llm(_td_prompt), r"(?:dot|graphviz)")
-                            st.graphviz_chart(_td_code, use_container_width=True)
-                            with st.expander("📋 DOT code"):
-                                st.code(_td_code, language="dot")
+                            # Cache so the diagram survives subsequent reruns
+                            st.session_state["_td_last_diagram"] = {
+                                "kind": "graphviz_dot",
+                                "dot": _td_code,
+                                "caption": "Graphviz",
+                                "file_name": "diagram.dot",
+                            }
                         except Exception as _tde:
                             st.error(f"Graphviz generation failed: {_tde}")
 
@@ -929,6 +938,32 @@ def show_text_to_diagrams() -> None:
                 mime="application/octet-stream",
                 use_container_width=True,
                 key="_td_dl_mpl",
+            )
+        elif _td_cached["kind"] == "mermaid_html":
+            st.caption(_td_cached.get("caption", "Mermaid"))
+            st.components.v1.html(_td_cached["html"], height=520, scrolling=True)
+            with st.expander("📋 Mermaid code"):
+                st.code(_td_cached["code"], language="text")
+            _dl_button(
+                "⬇  Save / Download .mmd",
+                _td_cached["code"],
+                file_name=_td_cached["file_name"],
+                mime="text/plain",
+                use_container_width=True,
+                key="_td_dl_mmd",
+            )
+        elif _td_cached["kind"] == "graphviz_dot":
+            st.caption(_td_cached.get("caption", "Graphviz"))
+            st.graphviz_chart(_td_cached["dot"], use_container_width=True)
+            with st.expander("📋 DOT code"):
+                st.code(_td_cached["dot"], language="dot")
+            _dl_button(
+                "⬇  Save / Download .dot",
+                _td_cached["dot"],
+                file_name=_td_cached["file_name"],
+                mime="text/plain",
+                use_container_width=True,
+                key="_td_dl_dot",
             )
 
 
