@@ -801,6 +801,9 @@ def show_text_to_diagrams() -> None:
 
                 # ── Mermaid ───────────────────────────────────────────────────
                 if _td_m == "mermaid":
+                    import json as _td_json  # noqa: PLC0415
+                    import base64 as _td_b64  # noqa: PLC0415
+                    import urllib.request as _td_req  # noqa: PLC0415
                     _mtype = st.session_state.get("td_mtype", "flowchart")
                     _td_prompt = (
                         f"Write a Mermaid '{_mtype}' diagram for the description below.\n"
@@ -810,26 +813,32 @@ def show_text_to_diagrams() -> None:
                     with st.spinner("Generating Mermaid diagram via Gemini…"):
                         try:
                             _td_code = _td_strip(_td_llm(_td_prompt), "mermaid")
-                            _td_html = (
-                                "<!DOCTYPE html><html><head>"
-                                '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>'
-                                "<style>"
-                                "body{background:#0d1117;margin:0;display:flex;"
-                                "justify-content:center;padding:24px}"
-                                ".mermaid{background:#161b22;padding:24px;"
-                                "border-radius:10px;max-width:100%}"
-                                "</style></head><body>"
-                                f'<div class="mermaid">{_td_code}</div>'
-                                "<script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>"
-                                "</body></html>"
-                            )
+
+                            # Fetch high-res PNG + SVG from mermaid.ink (no local deps needed)
+                            _mmd_payload = _td_b64.urlsafe_b64encode(
+                                _td_json.dumps({"code": _td_code, "mermaid": {"theme": "dark"}}).encode()
+                            ).decode()
+                            _mmd_png_bytes = _mmd_svg_bytes = None
+                            try:
+                                with _td_req.urlopen(
+                                    f"https://mermaid.ink/img/{_mmd_payload}?bgColor=161b22", timeout=15
+                                ) as _r:
+                                    _mmd_png_bytes = _r.read()
+                                with _td_req.urlopen(
+                                    f"https://mermaid.ink/svg/{_mmd_payload}", timeout=15
+                                ) as _r:
+                                    _mmd_svg_bytes = _r.read()
+                            except Exception:
+                                pass  # fall back to iframe-only display
+
                             # Cache so the diagram survives subsequent reruns
                             st.session_state["_td_last_diagram"] = {
                                 "kind": "mermaid_html",
-                                "html": _td_html,
                                 "code": _td_code,
                                 "caption": f"Mermaid · {_mtype}",
-                                "file_name": f"diagram_{_mtype}.mmd",
+                                "file_name": f"diagram_{_mtype}",
+                                "png_bytes": _mmd_png_bytes,
+                                "svg_bytes": _mmd_svg_bytes,
                             }
                         except Exception as _tde:
                             st.error(f"Mermaid generation failed: {_tde}")
@@ -940,18 +949,52 @@ def show_text_to_diagrams() -> None:
                 key="_td_dl_mpl",
             )
         elif _td_cached["kind"] == "mermaid_html":
+            import io as _td_io3  # noqa: PLC0415
             st.caption(_td_cached.get("caption", "Mermaid"))
-            st.components.v1.html(_td_cached["html"], height=520, scrolling=True)
+            _mmd_png = _td_cached.get("png_bytes")
+            _mmd_svg = _td_cached.get("svg_bytes")
+            if _mmd_png:
+                # High-res PNG from mermaid.ink — use st.image for sharp full-width display
+                st.image(_td_io3.BytesIO(_mmd_png), use_container_width=True)
+            else:
+                # Fallback: inline iframe (no internet / mermaid.ink unavailable)
+                _mmd_html_fb = (
+                    "<!DOCTYPE html><html><head>"
+                    '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>'
+                    "<style>body{background:#0d1117;margin:0;padding:24px}"
+                    ".mermaid{background:#161b22;padding:24px;border-radius:10px}"
+                    "</style></head><body>"
+                    f'<div class="mermaid">{_td_cached["code"]}</div>'
+                    "<script>mermaid.initialize({{startOnLoad:true,theme:'dark'}});</script>"
+                    "</body></html>"
+                )
+                st.components.v1.html(_mmd_html_fb, height=600, scrolling=True)
             with st.expander("📋 Mermaid code"):
                 st.code(_td_cached["code"], language="text")
-            _dl_button(
-                "⬇  Save / Download .mmd",
-                _td_cached["code"],
-                file_name=_td_cached["file_name"],
-                mime="text/plain",
-                use_container_width=True,
-                key="_td_dl_mmd",
-            )
+            # Download row: PNG · SVG · .mmd
+            _base = _td_cached.get("file_name", "diagram")
+            _dl_cols = st.columns(3)
+            with _dl_cols[0]:
+                _dl_button(
+                    "⬇  PNG" if _mmd_png else "⬇  PNG (unavailable)",
+                    _mmd_png or b"",
+                    file_name=f"{_base}.png", mime="image/png",
+                    use_container_width=True, key="_td_dl_mmd_png",
+                )
+            with _dl_cols[1]:
+                _dl_button(
+                    "⬇  SVG" if _mmd_svg else "⬇  SVG (unavailable)",
+                    _mmd_svg or b"",
+                    file_name=f"{_base}.svg", mime="image/svg+xml",
+                    use_container_width=True, key="_td_dl_mmd_svg",
+                )
+            with _dl_cols[2]:
+                _dl_button(
+                    "⬇  .mmd source",
+                    _td_cached["code"],
+                    file_name=f"{_base}.mmd", mime="text/plain",
+                    use_container_width=True, key="_td_dl_mmd_src",
+                )
         elif _td_cached["kind"] == "graphviz_dot":
             st.caption(_td_cached.get("caption", "Graphviz"))
             st.graphviz_chart(_td_cached["dot"], use_container_width=True)
