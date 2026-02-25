@@ -845,20 +845,26 @@ def show_text_to_diagrams() -> None:
                         """Render mermaid code via beautiful-mermaid (local Node.js).
                         Returns (svg_str | None, error_str).
                         """
-                        # Locate the bundled render script
-                        _candidates = [
-                            _TdPath(__file__).resolve().parent / "packaging" / "beautiful_mermaid" / "render.bundle.mjs",
+                        import os as _td_os  # noqa: PLC0415
+                        _rel = _TdPath("packaging") / "beautiful_mermaid" / "render.bundle.mjs"
+                        # Try multiple root candidates: __file__ parent, cwd, script dir
+                        _roots = [
+                            _TdPath(__file__).resolve().parent,
+                            _TdPath(_td_os.getcwd()),
+                            _TdPath(_td_os.path.abspath(_td_os.path.dirname(__file__))),
                         ]
                         if hasattr(sys, "_MEIPASS"):
-                            _candidates.insert(0,
-                                _TdPath(sys._MEIPASS) / "packaging" / "beautiful_mermaid" / "render.bundle.mjs"
-                            )
-                        _bundle = next((p for p in _candidates if p.exists()), None)
+                            _roots.insert(0, _TdPath(sys._MEIPASS))
+                        _bundle = next((r / _rel for r in _roots if (r / _rel).exists()), None)
                         if not _bundle:
-                            return None, "render.bundle.mjs not found — run: cd packaging/beautiful_mermaid && npm run build"
+                            return None, f"render.bundle.mjs not found (searched: {[str(r/_rel) for r in _roots]})"
                         try:
+                            # Resolve `node` binary — macOS PATH may be stripped
+                            _node = _td_subp.run(
+                                ["which", "node"], capture_output=True, text=True
+                            ).stdout.strip() or "node"
                             _res = _td_subp.run(
-                                ["node", str(_bundle), theme],
+                                [_node, str(_bundle), theme],
                                 input=code.encode(),
                                 capture_output=True,
                                 timeout=30,
@@ -873,7 +879,7 @@ def show_text_to_diagrams() -> None:
                         except Exception as _ex:
                             return None, str(_ex)
 
-                    with st.spinner("Generating Mermaid diagram via Gemini…"):
+                    with st.spinner("Generating Mermaid code via Gemini, rendering with beautiful-mermaid…"):
                         try:
                             # Attempt 1 — standard prompt
                             _td_code = _td_strip(
