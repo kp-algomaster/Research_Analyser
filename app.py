@@ -805,31 +805,70 @@ def show_text_to_diagrams() -> None:
                     import base64 as _td_b64  # noqa: PLC0415
                     import urllib.request as _td_req  # noqa: PLC0415
                     _mtype = st.session_state.get("td_mtype", "flowchart")
-                    _td_prompt = (
-                        f"Write a Mermaid '{_mtype}' diagram for the description below.\n"
-                        "Return ONLY the raw Mermaid code — no explanation, no markdown fences.\n\n"
-                        + _tdv
-                    )
+
+                    def _mmd_build_prompt(mtype: str, text: str, strict: bool = False) -> str:
+                        """Return a Mermaid prompt; strict=True adds extra simplicity constraints."""
+                        _rules = (
+                            f"Write a syntactically valid Mermaid '{mtype}' diagram for the description below.\n"
+                            "STRICT RULES — Mermaid 11 syntax:\n"
+                            "• Return ONLY raw Mermaid DSL, no markdown fences, no explanation\n"
+                            "• First line must be the diagram type keyword (e.g. flowchart LR)\n"
+                            "• Node IDs must be alphanumeric with no spaces or special characters\n"
+                            "• Any node label containing spaces or special chars MUST use double quotes: A[\"My Label\"]\n"
+                            "• Never use unquoted parentheses, colons, or slashes inside node labels\n"
+                            "• Use --> for directed edges; label edges with |text| syntax: A -->|label| B\n"
+                            "• subgraph titles must be quoted if they contain spaces\n"
+                        )
+                        if strict:
+                            _rules += (
+                                "• Use ONLY simple rectangle [], diamond {{}}, and circle (()) nodes\n"
+                                "• Maximum 10 nodes, no subgraphs, no classDef styling\n"
+                                "• Keep arrows simple: A --> B with no edge labels\n"
+                            )
+                        return _rules + "\nDescription:\n" + text
+
+                    def _mmd_fetch(code: str) -> tuple:
+                        """Fetch PNG + SVG from mermaid.ink. Returns (png_bytes, svg_bytes, has_error)."""
+                        payload = _td_b64.urlsafe_b64encode(
+                            _td_json.dumps({"code": code, "mermaid": {"theme": "dark"}}).encode()
+                        ).decode()
+                        png_b = svg_b = None
+                        try:
+                            with _td_req.urlopen(
+                                f"https://mermaid.ink/img/{payload}?bgColor=161b22", timeout=15
+                            ) as _r:
+                                png_b = _r.read()
+                            with _td_req.urlopen(
+                                f"https://mermaid.ink/svg/{payload}", timeout=15
+                            ) as _r:
+                                svg_b = _r.read()
+                        except Exception:
+                            pass
+                        # Detect syntax error: mermaid.ink embeds "Syntax error" in the SVG text
+                        has_err = svg_b is not None and b"Syntax error" in svg_b
+                        return png_b, svg_b, has_err
+
                     with st.spinner("Generating Mermaid diagram via Gemini…"):
                         try:
-                            _td_code = _td_strip(_td_llm(_td_prompt), "mermaid")
+                            # Attempt 1 — standard prompt
+                            _td_code = _td_strip(
+                                _td_llm(_mmd_build_prompt(_mtype, _tdv, strict=False)), "mermaid"
+                            )
+                            _mmd_png_bytes, _mmd_svg_bytes, _mmd_err = _mmd_fetch(_td_code)
 
-                            # Fetch high-res PNG + SVG from mermaid.ink (no local deps needed)
-                            _mmd_payload = _td_b64.urlsafe_b64encode(
-                                _td_json.dumps({"code": _td_code, "mermaid": {"theme": "dark"}}).encode()
-                            ).decode()
-                            _mmd_png_bytes = _mmd_svg_bytes = None
-                            try:
-                                with _td_req.urlopen(
-                                    f"https://mermaid.ink/img/{_mmd_payload}?bgColor=161b22", timeout=15
-                                ) as _r:
-                                    _mmd_png_bytes = _r.read()
-                                with _td_req.urlopen(
-                                    f"https://mermaid.ink/svg/{_mmd_payload}", timeout=15
-                                ) as _r:
-                                    _mmd_svg_bytes = _r.read()
-                            except Exception:
-                                pass  # fall back to iframe-only display
+                            # Attempt 2 — retry with strict/simplified prompt if syntax error detected
+                            if _mmd_err or (_mmd_svg_bytes is None and _mmd_png_bytes is None):
+                                with st.spinner("Syntax error detected — retrying with simplified prompt…"):
+                                    _td_code = _td_strip(
+                                        _td_llm(_mmd_build_prompt(_mtype, _tdv, strict=True)), "mermaid"
+                                    )
+                                    _mmd_png_bytes, _mmd_svg_bytes, _mmd_err = _mmd_fetch(_td_code)
+
+                            if _mmd_err:
+                                st.error("Mermaid syntax error after retry. Showing raw code below — "
+                                         "you can copy it to mermaid.live to debug.")
+                                st.code(_td_code, language="text")
+                                _mmd_png_bytes = _mmd_svg_bytes = None
 
                             # Cache so the diagram survives subsequent reruns
                             st.session_state["_td_last_diagram"] = {
