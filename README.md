@@ -49,7 +49,8 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 
 - Python 3.12 (recommended; 3.10+ supported)
 - CUDA-compatible GPU (for MonkeyOCR) or Apple Silicon / CPU fallback mode
-- API keys: **Google Gemini** (required for PaperBanana diagrams), OpenAI (review), Tavily (optional, related work search)
+- API keys: **Google Gemini** (required for PaperBanana diagrams and LLM diagram generation), OpenAI (review), Tavily (optional, related work search)
+- Node.js ≥ 18 (required for Mermaid rendering via beautiful-mermaid; check with `node --version`)
 
 ### Installation
 
@@ -64,6 +65,9 @@ source .venv312/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Install Gemini SDK (required for Mermaid / Graphviz / Matplotlib generation)
+pip install google-genai
 
 # Install MonkeyOCR
 pip install monkeyocr
@@ -329,9 +333,9 @@ Requires a Google API key. No Node.js dependency.
 
 ---
 
-#### 2. Mermaid — via [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid)
+#### 2. Mermaid (beautiful-mermaid)
 
-Gemini generates the Mermaid DSL; the diagram is rendered **locally** using [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) — a zero-DOM, fully themeable Node.js renderer. No internet connection required after setup.
+Gemini generates the Mermaid DSL; the diagram is rendered **locally** using [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) — a zero-DOM, fully themeable Node.js renderer. No internet connection required after setup. The pre-built `render.bundle.mjs` is included in the repo — no `npm install` needed at runtime.
 
 | Option | Values |
 |--------|--------|

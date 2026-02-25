@@ -624,7 +624,7 @@ def _stop_service(name: str) -> None:
 
 _TD_MODELS = {
     "PaperBanana": "paperbanana",
-    "Mermaid (via Gemini)": "mermaid",
+    "Mermaid (beautiful-mermaid)": "mermaid",
     "Graphviz DOT (via Gemini)": "graphviz",
     "Matplotlib (via Gemini)": "matplotlib",
 }
@@ -654,7 +654,7 @@ _TD_MODEL_CAPS = {
 def show_text_to_diagrams() -> None:
     st.markdown(
         '<div class="hero"><p class="hero-title">Text to Diagrams</p>'
-        '<p class="hero-sub">Generate research diagrams from a text description using PaperBanana or open-source renderers</p></div>',
+        '<p class="hero-sub">Generate research diagrams from a text description using PaperBanana, beautiful-mermaid (15 themes), Graphviz, or Matplotlib</p></div>',
         unsafe_allow_html=True,
     )
 
