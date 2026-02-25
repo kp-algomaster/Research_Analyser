@@ -478,6 +478,10 @@ def _launch_streamlit(
         # so download buttons save directly to ~/Downloads/ instead of using
         # browser-based st.download_button (which WKWebView cannot handle).
         "RA_NATIVE_APP": "1",
+        # Pass the PyInstaller bundle dir so Streamlit subprocesses can locate
+        # bundled assets (e.g. render.bundle.mjs) that live inside sys._MEIPASS.
+        # Streamlit runs as a child process and does NOT inherit sys._MEIPASS.
+        "RA_BUNDLE_DIR": getattr(sys, "_MEIPASS", ""),
         "STREAMLIT_GLOBAL_DEVELOPMENT_MODE": "false",
         # Dark theme — mirrors .streamlit/config.toml which Streamlit's subprocess
         # cannot find inside the frozen .app bundle.

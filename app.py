@@ -847,14 +847,22 @@ def show_text_to_diagrams() -> None:
                         """
                         import os as _td_os  # noqa: PLC0415
                         _rel = _TdPath("packaging") / "beautiful_mermaid" / "render.bundle.mjs"
-                        # Try multiple root candidates: __file__ parent, cwd, script dir
-                        _roots = [
+                        # Priority order for locating render.bundle.mjs:
+                        #  1. RA_BUNDLE_DIR env var — set by macOS launcher to sys._MEIPASS
+                        #     (Streamlit runs as child subprocess; _MEIPASS not inherited)
+                        #  2. sys._MEIPASS — direct frozen execution
+                        #  3. __file__ parent — dev mode (project root)
+                        #  4. cwd / abspath fallbacks
+                        _roots = []
+                        if _td_os.environ.get("RA_BUNDLE_DIR"):
+                            _roots.append(_TdPath(_td_os.environ["RA_BUNDLE_DIR"]))
+                        if hasattr(sys, "_MEIPASS"):
+                            _roots.append(_TdPath(sys._MEIPASS))
+                        _roots += [
                             _TdPath(__file__).resolve().parent,
                             _TdPath(_td_os.getcwd()),
                             _TdPath(_td_os.path.abspath(_td_os.path.dirname(__file__))),
                         ]
-                        if hasattr(sys, "_MEIPASS"):
-                            _roots.insert(0, _TdPath(sys._MEIPASS))
                         _bundle = next((r / _rel for r in _roots if (r / _rel).exists()), None)
                         if not _bundle:
                             return None, f"render.bundle.mjs not found (searched: {[str(r/_rel) for r in _roots]})"
