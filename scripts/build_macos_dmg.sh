@@ -114,107 +114,58 @@ mkdir -p "$STAGE_DIR/.background"
 cp -r "$APP_PATH" "$STAGE_DIR/"
 ln -s /Applications "$STAGE_DIR/Applications"
 
-# Generate background image (Pillow preferred; stdlib PNG fallback)
-# Layout (540×320 canvas, window bounds {200,100,740,420}):
-#   Finder set position = CENTRE of icon image (100 pt icons).
-#   Left icon centre : {135, 140}  → left well  (65,70)→(205,250)
-#   Right icon centre: {405, 140}  → right well (335,70)→(475,250)
-#   Arrow            : x 225–315, y 140
-#   Text             : y 270, 287
+# Generate background image — Ollama-style: clean white, thin curved arrow, no wells.
+# Canvas: 1080×640 px saved at 144 dpi → displays at 540×320 pt in Finder (Retina-sharp).
+# Window bounds {200,100,740,420} = 540×320 pt.
+# Icon centres (pt): left=(135,140), right=(405,140)  → (2× px): (270,280), (810,280).
 BG_PATH="$STAGE_DIR/.background/background.png"
 python3 -c "
-import struct, zlib
+import struct, zlib, math
 bg = '$BG_PATH'
-W, H = 540, 320
+W, H = 1080, 640   # 2x canvas; dpi=(144,144) makes Finder render at 540x320 pt
 try:
     from PIL import Image, ImageDraw, ImageFont
 
-    # ── Canvas: white background ──────────────────────────────────────────────
     img = Image.new('RGB', (W, H), (255, 255, 255))
-    d = ImageDraw.Draw(img)
+    d   = ImageDraw.Draw(img)
 
-    # ── Well geometry ─────────────────────────────────────────────────────────
-    # Finder set position uses CENTRE of the icon IMAGE (confirmed from
-    # screenshots).  Icon centres: left=(135,140), right=(405,140).
-    # Icon image: cx±50 pt.  Label below icon: cy+55 → cy+90 (≈35 pt).
-    # Wells: 20 pt padding around the full icon+label bounding box.
-    R = 14                                   # corner radius
-    LX1, LY1, LX2, LY2 = 65,  70, 205, 250 # left well  (140 × 180 pt)
-    RX1, RY1, RX2, RY2 = 335, 70, 475, 250 # right well (140 × 180 pt)
-    MID_Y = 140                              # == icon centre y
+    # ── Thin curved arrow (Ollama-style) ──────────────────────────────────────
+    # Cubic bezier: starts right of left icon, arcs up, ends left of right icon.
+    # All coords in 2x pixels.  Icon centres: left=(270,280), right=(810,280).
+    def bez(t, p0, p1, p2, p3):
+        mt = 1 - t
+        return (mt**3*p0[0] + 3*mt**2*t*p1[0] + 3*mt*t**2*p2[0] + t**3*p3[0],
+                mt**3*p0[1] + 3*mt**2*t*p1[1] + 3*mt*t**2*p2[1] + t**3*p3[1])
 
-    # Fake drop-shadow: light gray offset by 2 px
-    SHADOW = (210, 213, 218)
-    for bx1, by1, bx2, by2 in [(LX1, LY1, LX2, LY2), (RX1, RY1, RX2, RY2)]:
-        d.rounded_rectangle([bx1+2, by1+3, bx2+2, by2+3],
-                            radius=R, fill=SHADOW)
+    P0 = (410, 292)   # start — right of left icon
+    P1 = (510, 195)   # ctrl1  — pull curve upward
+    P2 = (600, 200)   # ctrl2  — keep arc high
+    P3 = (680, 290)   # end   — left of right icon
 
-    # Well backgrounds
-    FILL    = (246, 247, 249)
-    BORDER  = (200, 205, 215)
-    HILITE  = (255, 255, 255)   # top-edge inner highlight
-    for bx1, by1, bx2, by2 in [(LX1, LY1, LX2, LY2), (RX1, RY1, RX2, RY2)]:
-        d.rounded_rectangle([bx1, by1, bx2, by2],
-                            radius=R, fill=FILL, outline=BORDER, width=1)
-        # 1-px inner highlight along the top edge
-        d.line([(bx1+R, by1+1), (bx2-R, by1+1)], fill=HILITE, width=1)
+    STEPS = 400
+    pts = [(round(bez(i/STEPS, P0, P1, P2, P3)[0]),
+            round(bez(i/STEPS, P0, P1, P2, P3)[1])) for i in range(STEPS+1)]
 
-    # ── Arrow: macOS Aqua liquid style ────────────────────────────────────────
-    AX0     = LX2 + 15           # shaft left edge
-    AX1     = RX1 - 15           # arrowhead tip
-    SR      = 5                  # shaft half-height  → 10 px tall pill
-    HL      = 24                 # arrowhead length
-    HH      = 15                 # arrowhead half-height
-    SX2     = AX1 - HL           # shaft / head join x
-
-    B_BASE  = (  0, 122, 255)    # macOS #007AFF system blue
-    B_DARK  = (  0,  80, 200)    # bottom shadow tint
-    B_LIGHT = ( 80, 170, 255)    # upper gradient highlight
-    B_SPEC  = (200, 230, 255)    # thin specular stripe
-    B_SHAD  = (185, 200, 220)    # drop-shadow colour
-
-    # 1. Soft drop-shadow (offset 2 px down)
-    d.rounded_rectangle([AX0+2, MID_Y-SR+2, SX2+2, MID_Y+SR+2],
-                        radius=SR, fill=B_SHAD)
-    d.polygon([(SX2+2, MID_Y-HH+2), (AX1+2, MID_Y+2), (SX2+2, MID_Y+HH+2)],
-              fill=B_SHAD)
-
-    # 2. Base fill — shaft pill + arrowhead
-    d.rounded_rectangle([AX0, MID_Y-SR, SX2, MID_Y+SR],
-                        radius=SR, fill=B_BASE)
-    d.polygon([(SX2, MID_Y-HH), (AX1, MID_Y), (SX2, MID_Y+HH)],
-              fill=B_BASE)
-
-    # 3. Bottom darker strip — deepen lower half for depth
-    d.rounded_rectangle([AX0+2, MID_Y+1, SX2-2, MID_Y+SR-1],
-                        radius=SR-2, fill=B_DARK)
-
-    # 4. Upper gradient tint — lighter top half
-    d.rounded_rectangle([AX0+2, MID_Y-SR+1, SX2-2, MID_Y-1],
-                        radius=SR-2, fill=B_LIGHT)
-
-    # 5. Specular highlight stripe — thin gloss band near very top
-    d.rounded_rectangle([AX0+6, MID_Y-SR+2, SX2-8, MID_Y-SR+4],
-                        radius=1, fill=B_SPEC)
-
-    # 6. Arrowhead upper highlight
-    d.polygon([(SX2+2, MID_Y-HH+3), (AX1-6, MID_Y-2), (SX2+2, MID_Y-2)],
-              fill=B_LIGHT)
-
-    # ── Text ──────────────────────────────────────────────────────────────────
+    INK = (36, 36, 36)   # near-black
+    SW  = 7              # stroke width in 2x px (≈3.5 pt)
     try:
-        f1 = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 13)
-        f2 = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 11)
-    except Exception:
-        f1 = f2 = None
-    kw = lambda f: {'font': f} if f else {}
-    d.text((W//2, 270), 'Drag to Applications to install',
-           fill=(60, 65, 75), anchor='mm', **kw(f1))
-    d.text((W//2, 287), 'Then open from your Applications folder',
-           fill=(130, 138, 150), anchor='mm', **kw(f2))
+        d.line(pts, fill=INK, width=SW, joint='curve')
+    except TypeError:
+        d.line(pts, fill=INK, width=SW)
 
-    img.save(bg)
-    print('  Background: OK')
+    # Arrowhead — V-shape aligned to tangent at P3 (direction P2→P3)
+    tx = P3[0] - P2[0]; ty = P3[1] - P2[1]
+    tl = math.sqrt(tx*tx + ty*ty)
+    tx /= tl; ty /= tl
+    ang = math.atan2(ty, tx)
+    L = 38; A = math.radians(25)
+    w0 = (P3[0] - L*math.cos(ang - A), P3[1] - L*math.sin(ang - A))
+    w1 = (P3[0] - L*math.cos(ang + A), P3[1] - L*math.sin(ang + A))
+    d.line([w0, P3], fill=INK, width=SW)
+    d.line([P3, w1], fill=INK, width=SW)
+
+    img.save(bg, dpi=(144, 144))
+    print('  Background: OK (2x Retina, Ollama-style)')
 
 except Exception as _e:
     print(f'  Pillow failed ({_e}); using stdlib fallback')
@@ -234,7 +185,7 @@ except Exception as _e:
             + chunk(b'IHDR', ihdr)
             + chunk(b'IDAT', compressed)
             + chunk(b'IEND', b''))
-        print('  Background: stdlib fallback (no text)')
+        print('  Background: stdlib fallback (plain white)')
     except Exception as _e2:
         print(f'  Background skipped: {_e2}')
 " 2>&1 || true
