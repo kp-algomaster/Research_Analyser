@@ -22,26 +22,9 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Research Analyser                      │
-├──────────┬──────────────┬───────────────┬───────────────┤
-│  Input   │   Extraction │   Analysis    │    Output     │
-│  Layer   │   Pipeline   │   Pipeline    │    Layer      │
-├──────────┼──────────────┼───────────────┼───────────────┤
-│ URL      │ MonkeyOCR    │ PaperBanana   │ Markdown      │
-│ Fetcher  │ 1.5          │ Diagrams      │ Report        │
-├──────────┼──────────────┼───────────────┼───────────────┤
-│ PDF      │ Text/LaTeX   │ LangGraph     │ Key Points    │
-│ Upload   │ Extraction   │ Reviewer      │ & Equations   │
-├──────────┼──────────────┼───────────────┼───────────────┤
-│ arXiv    │ Table/Figure │ PaperReview   │ Diagrams      │
-│ Resolver │ Detection    │ Comparison    │ (PNG/SVG)     │
-├──────────┼──────────────┼───────────────┼───────────────┤
-│          │              │ Qwen3-TTS     │ Audio         │
-│          │              │ Narration     │ (WAV)         │
-└──────────┴──────────────┴───────────────┴───────────────┘
-```
+![Research Analyser — Architecture](docs/screenshots/architecture_diagram.png)
+
+> Rendered with [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) · Tokyo Night theme
 
 ## Quick Start
 
