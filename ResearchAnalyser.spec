@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('app.py', '.'), ('config.yaml', '.'), ('monkeyocr.py', '.'), ('research_analyser', 'research_analyser'), ('.streamlit', '.streamlit'), ('packaging/python312.tar.gz', '.')]
+datas = [('app.py', '.'), ('config.yaml', '.'), ('monkeyocr.py', '.'), ('research_analyser', 'research_analyser'), ('.streamlit', '.streamlit'), ('packaging/python312.tar.gz', '.'), ('packaging/beautiful_mermaid/render.bundle.mjs', 'packaging/beautiful_mermaid')]
 binaries = []
 hiddenimports = ['webview', 'webview.platforms.cocoa']
 tmp_ret = collect_all('webview')
@@ -39,6 +39,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['packaging/icon.icns'],
 )
 coll = COLLECT(
     exe,
@@ -52,6 +53,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='ResearchAnalyser.app',
-    icon=None,
+    icon='packaging/icon.icns',
     bundle_identifier='com.research.analyser',
 )

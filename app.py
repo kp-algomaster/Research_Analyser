@@ -35,6 +35,31 @@ from research_analyser.models import AnalysisOptions
 
 logging.basicConfig(level=logging.INFO)
 
+
+def _truthy(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _bootstrap_runtime_env() -> None:
+    if _truthy(os.environ.get("SKIP_SSL_VERIFICATION", "")):
+        os.environ["SKIP_SSL_VERIFICATION"] = "true"
+        os.environ["PYTHONHTTPSVERIFY"] = "0"
+
+    try:
+        boot_config = Config.load()
+    except Exception:
+        return
+
+    if boot_config.google_api_key and not os.environ.get("GOOGLE_API_KEY"):
+        os.environ["GOOGLE_API_KEY"] = boot_config.google_api_key
+
+    if boot_config.diagrams.skip_ssl_verification:
+        os.environ["SKIP_SSL_VERIFICATION"] = "true"
+        os.environ["PYTHONHTTPSVERIFY"] = "0"
+
+
+_bootstrap_runtime_env()
+
 # ── Native-app download helper ─────────────────────────────────────────────────
 # When running inside the pywebview (WKWebView) native macOS window,
 # browser-based download links don't work. Save directly to ~/Downloads/ instead.
@@ -509,6 +534,52 @@ def _cfg(key: str, default=None):
     return st.session_state.get(f"cfg_{key}", default)
 
 
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_skip_ssl() -> bool:
+    return bool(_cfg("skip_ssl_verification", _env_flag("SKIP_SSL_VERIFICATION")))
+
+
+def _apply_skip_ssl_env() -> None:
+    if _should_skip_ssl():
+        os.environ["SKIP_SSL_VERIFICATION"] = "true"
+        os.environ["PYTHONHTTPSVERIFY"] = "0"
+
+
+def _collect_pb_intermediate_images(
+    output_dir: str,
+    diagram_types: list[str],
+    diagrams_root: str | None = None,
+) -> dict[str, list[str]]:
+    """Collect latest PaperBanana iteration images per diagram type."""
+    base = Path(diagrams_root) if diagrams_root else (Path(output_dir) / "diagrams")
+    found: dict[str, list[str]] = {}
+
+    for dtype in diagram_types:
+        type_dir = base / dtype
+        if not type_dir.exists():
+            continue
+
+        run_dirs = [p for p in type_dir.glob("run_*") if p.is_dir()]
+        if not run_dirs:
+            continue
+
+        latest_run = max(run_dirs, key=lambda p: p.stat().st_mtime)
+        iter_images = sorted(
+            latest_run.glob("diagram_iter_*.png"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if not iter_images:
+            continue
+
+        found[dtype] = [str(p) for p in iter_images[-3:]]
+
+    return found
+
+
 # ── Helpers: HTML components ──────────────────────────────────────────────────
 
 def _dimbar(name: str, score: float, max_score: float = 4.0) -> str:
@@ -734,6 +805,7 @@ def show_text_to_diagrams() -> None:
     # Clear cached result when user kicks off a new generation
     if _td_run:
         st.session_state.pop("_td_last_diagram", None)
+        st.session_state.pop("_td_run_state", None)
 
     if _td_run and st.session_state.get("td_text", "").strip():
         _tdv       = st.session_state["td_text"].strip()
@@ -745,6 +817,8 @@ def show_text_to_diagrams() -> None:
             from research_analyser.models import ExtractedContent as _TdEC, Section as _TdSec  # noqa: PLC0415
             from research_analyser.diagram_generator import DiagramGenerator as _TdDG  # noqa: PLC0415
             import asyncio as _td_aio  # noqa: PLC0415
+            import threading as _td_threading  # noqa: PLC0415
+            import traceback as _td_tb  # noqa: PLC0415
 
             _td_pb_dtype = _pb_type_map.get(
                 st.session_state.get("td_pb_dtype", "📐 Methodology"), "methodology"
@@ -757,6 +831,12 @@ def show_text_to_diagrams() -> None:
                 sections=[_TdSec(title="Description", level=1, content=_tdv)],
                 equations=[], tables=[], figures=[], references=[],
             )
+            if not _td_gkey.strip():
+                st.error("Google API key required for PaperBanana generation. Set it in ⚙ Configuration.")
+                st.info("If you are on a corporate proxy, also enable 'Skip SSL Verification'.")
+                return
+
+            _apply_skip_ssl_env()
             if _td_gkey:
                 os.environ["GOOGLE_API_KEY"] = _td_gkey
             _td_dg = _TdDG(
@@ -764,28 +844,34 @@ def show_text_to_diagrams() -> None:
                 vlm_model=_cfg("vlm_model", "gemini-2.0-flash"),
                 image_model=_cfg("image_model", "gemini-3-pro-image-preview"),
                 output_dir=os.path.join(_td_outdir, "diagrams", "custom"),
+                skip_ssl_verification=_should_skip_ssl(),
             )
-            with st.spinner("PaperBanana: generating diagram…"):
+            _td_state = {
+                "done": False,
+                "error": None,
+                "diagrams": None,
+                "diagram_progress": {},
+                "diagram_type": _td_pb_dtype,
+                "diagram_root": os.path.join(_td_outdir, "diagrams", "custom"),
+                "output_dir": _td_outdir,
+            }
+            st.session_state["_td_run_state"] = _td_state
+
+            def _td_worker(_state=_td_state, _dg=_td_dg, _ec=_td_ec, _dtype=_td_pb_dtype):
+                def _on_diag_prog(dtype: str, status: str) -> None:
+                    _state["diagram_progress"][dtype] = status
+
                 try:
-                    _td_diags = _td_aio.run(_td_dg.generate(_td_ec, [_td_pb_dtype]))
-                    if _td_diags:
-                        _td_d = _td_diags[0]
-                        if _td_d.image_path and Path(_td_d.image_path).exists():
-                            # Cache so the image survives download-button reruns
-                            st.session_state["_td_last_diagram"] = {
-                                "kind": "image_path",
-                                "path": _td_d.image_path,
-                                "caption": f"PaperBanana · {_td_pb_dtype}",
-                                "file_name": f"diagram_{_td_pb_dtype}.png",
-                            }
-                        else:
-                            st.error(f"PaperBanana produced no image. {getattr(_td_d, 'error', '')}")
-                    else:
-                        st.warning("PaperBanana returned no diagrams.")
+                    _state["diagrams"] = _td_aio.run(
+                        _dg.generate(_ec, [_dtype], on_progress=_on_diag_prog)
+                    )
                 except Exception as _tde:
-                    st.error(f"PaperBanana failed: {_tde}")
-                    if not _td_gkey:
-                        st.info("💡 Set your Google API key in ⚙ Configuration.")
+                    _state["error"] = f"{_tde}\n\n{_td_tb.format_exc()}"
+                finally:
+                    _state["done"] = True
+
+            _td_threading.Thread(target=_td_worker, daemon=True).start()
+            st.rerun()
 
         # ── LLM-based open-source renderers (Mermaid / Graphviz / Matplotlib) ─
         else:
@@ -797,9 +883,16 @@ def show_text_to_diagrams() -> None:
 
                 def _td_llm(prompt: str) -> str:
                     """Call Gemini 2.0 Flash; try new google-genai SDK first."""
+                    _apply_skip_ssl_env()
                     try:
                         from google import genai as _gai  # noqa: PLC0415
-                        return _gai.Client(api_key=_td_gkey).models.generate_content(
+                        import httpx  # noqa: PLC0415
+                        
+                        http_options = {}
+                        if _should_skip_ssl():
+                            http_options["httpx_client"] = httpx.Client(verify=False)
+                            
+                        return _gai.Client(api_key=_td_gkey, http_options=http_options).models.generate_content(
                             model="gemini-2.0-flash", contents=prompt
                         ).text.strip()
                     except Exception:
@@ -1032,6 +1125,61 @@ def show_text_to_diagrams() -> None:
                             if _td_code:
                                 with st.expander("📋 Generated code (with error)"):
                                     st.code(_td_code, language="python")
+
+    # ── Live Text→Diagram progress (PaperBanana only) ────────────────────────
+    _td_bg = st.session_state.get("_td_run_state")
+    if _td_bg:
+        import time as _td_poll_time  # noqa: PLC0415
+
+        _td_dtype = _td_bg.get("diagram_type", "methodology")
+        _td_prog = _td_bg.get("diagram_progress", {})
+        _td_status = _td_prog.get(_td_dtype, "⏳ Queued…")
+        st.info(f"PaperBanana status · {_td_dtype.title()}: {_td_status}")
+
+        _td_intermediate = _collect_pb_intermediate_images(
+            _td_bg.get("output_dir", _DEFAULT_OUTPUT),
+            [_td_dtype],
+            diagrams_root=_td_bg.get("diagram_root"),
+        ).get(_td_dtype, [])
+        if _td_intermediate:
+            st.caption(f"{_td_dtype.title()} · intermediate outputs")
+            _td_cols = st.columns(min(3, len(_td_intermediate)))
+            for _i, _img_path in enumerate(_td_intermediate):
+                with _td_cols[_i]:
+                    st.image(_img_path, use_container_width=True)
+
+        if not _td_bg.get("done"):
+            _td_poll_time.sleep(0.75)
+            st.rerun()
+
+        _td_diags = _td_bg.get("diagrams") or []
+        _td_err = _td_bg.get("error")
+        st.session_state.pop("_td_run_state", None)
+
+        if _td_err:
+            st.error(f"PaperBanana failed: {_td_err}")
+            return
+        if not _td_diags:
+            st.warning("PaperBanana returned no diagrams.")
+            return
+
+        _td_d = _td_diags[0]
+        if getattr(_td_d, "is_fallback", False):
+            st.error("PaperBanana generation failed. A fallback diagram was produced instead.")
+            if getattr(_td_d, "error", ""):
+                st.caption(f"PaperBanana error: {_td_d.error}")
+            return
+        if _td_d.image_path and Path(_td_d.image_path).exists():
+            st.session_state["_td_last_diagram"] = {
+                "kind": "image_path",
+                "path": _td_d.image_path,
+                "caption": f"PaperBanana · {_td_dtype}",
+                "file_name": f"diagram_{_td_dtype}.png",
+            }
+            st.rerun()
+        else:
+            st.error(f"PaperBanana produced no image. {getattr(_td_d, 'error', '')}")
+            return
 
     # ── Persistent diagram render ──────────────────────────────────────────────
     # Shown on EVERY rerun (including after a download-button click) so the
@@ -1340,6 +1488,10 @@ def show_configuration() -> None:
                 "Optimize inputs", value=_cfg("optimize_inputs", True),
                 help="Retriever stage selects best reference examples for planning",
             )
+            st.session_state["cfg_skip_ssl_verification"] = st.toggle(
+                "Skip SSL Verification", value=_cfg("skip_ssl_verification", _env_flag("SKIP_SSL_VERIFICATION")),
+                help="Skip SSL verification for PaperBanana and Gemini API calls (useful for corporate proxies)",
+            )
 
         # STORM
         with st.container(border=True):
@@ -1647,6 +1799,8 @@ if run_clicked:
                 os.environ[env_key] = val
 
         config = Config.load()
+        if _should_skip_ssl():
+            _apply_skip_ssl_env()
         config.app.output_dir     = output_dir
         config.app.temp_dir       = temp_dir
         config.diagrams.provider         = _cfg("diagram_provider", "gemini")
@@ -1655,6 +1809,7 @@ if run_clicked:
         config.diagrams.max_iterations   = int(_cfg("max_iterations", 3))
         config.diagrams.auto_refine      = _cfg("auto_refine", True)
         config.diagrams.optimize_inputs  = _cfg("optimize_inputs", True)
+        config.diagrams.skip_ssl_verification = _should_skip_ssl()
         config.ocr.model          = _cfg("ocr_model", "MonkeyOCR-pro-3B")
         config.ocr.device         = _cfg("ocr_device", "auto")
         config.review.model       = _cfg("review_model", "gpt-4o")
@@ -1715,6 +1870,7 @@ if run_clicked:
             "generate_storm":   generate_storm,
             "generate_diagrams": generate_diagrams,
             "generate_review":  generate_review,
+            "diagram_types":    list(diagram_types),
         }
 
         def _analysis_worker(
@@ -1958,6 +2114,7 @@ if _bg is not None:
                     with _pi_col_list[_pi_col_idx]:
                         _pi_col_idx += 1
                         _dg_prog = _bg.get("diagram_progress", {})
+                        _dg_types = _bg_meta.get("diagram_types", [])
                         _rows = ""
                         for _dtype, _dstatus in _dg_prog.items():
                             if "✓" in _dstatus:
@@ -1984,6 +2141,20 @@ if _bg is not None:
                             f'</div>',
                             unsafe_allow_html=True,
                         )
+
+                        _intermediate = _collect_pb_intermediate_images(
+                            _bg_meta.get("output_dir", _DEFAULT_OUTPUT),
+                            _dg_types,
+                        )
+                        for _dtype in _dg_types:
+                            _imgs = _intermediate.get(_dtype, [])
+                            if not _imgs:
+                                continue
+                            st.caption(f"{_dtype.title()} — intermediate outputs")
+                            _cols = st.columns(min(3, len(_imgs)))
+                            for _idx, _img_path in enumerate(_imgs):
+                                with _cols[_idx]:
+                                    st.image(_img_path, use_container_width=True)
 
                 if _has_rv:
                     with _pi_col_list[_pi_col_idx]:

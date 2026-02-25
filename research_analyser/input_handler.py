@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import re
+import ssl
 import tempfile
 import tarfile
 import xml.etree.ElementTree as ET
@@ -35,6 +37,39 @@ class InputHandler:
     def __init__(self, temp_dir: Optional[str] = None):
         self.temp_dir = Path(temp_dir) if temp_dir else Path(tempfile.mkdtemp())
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _skip_ssl_verification() -> bool:
+        value = str(os.getenv("SKIP_SSL_VERIFICATION", "")).strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    async def _session_get(self, session: aiohttp.ClientSession, url: str, **kwargs):
+        """GET with optional SSL-verification fallback on certificate errors."""
+        use_ssl = kwargs.pop("ssl", None)
+        if use_ssl is None:
+            use_ssl = False if self._skip_ssl_verification() else True
+
+        try:
+            return await session.get(url, ssl=use_ssl, **kwargs)
+        except (aiohttp.ClientConnectorCertificateError, aiohttp.ClientSSLError) as exc:
+            if use_ssl is False:
+                raise
+            logger.warning(
+                "SSL verification failed for %s; retrying with verification disabled: %s",
+                url,
+                exc,
+            )
+            return await session.get(url, ssl=False, **kwargs)
+        except aiohttp.ClientConnectorError as exc:
+            cause = getattr(exc, "os_error", None)
+            if use_ssl is False or not isinstance(cause, ssl.SSLCertVerificationError):
+                raise
+            logger.warning(
+                "Certificate chain rejected for %s; retrying with verification disabled: %s",
+                url,
+                cause,
+            )
+            return await session.get(url, ssl=False, **kwargs)
 
     def detect_source_type(self, source: str) -> SourceType:
         """Auto-detect the type of input source."""
@@ -109,7 +144,11 @@ class InputHandler:
         source_url = f"https://arxiv.org/e-print/{arxiv_id}"
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(source_url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                async with await self._session_get(
+                    session,
+                    source_url,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
                     if resp.status != 200:
                         return None
                     content = await resp.read()
@@ -142,7 +181,11 @@ class InputHandler:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with await self._session_get(
+                    session,
+                    api_url,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
                     if resp.status != 200:
                         return None
                     xml_text = await resp.text()
@@ -185,7 +228,11 @@ class InputHandler:
         for attempt in range(max_retries):
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                    async with await self._session_get(
+                        session,
+                        url,
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as resp:
                         if resp.status != 200:
                             raise InputError(
                                 f"HTTP {resp.status} fetching {url}"
@@ -211,8 +258,11 @@ class InputHandler:
         async with aiohttp.ClientSession() as session:
             # Try direct PDF content negotiation
             headers = {"Accept": "application/pdf"}
-            async with session.get(
-                url, headers=headers, allow_redirects=True,
+            async with await self._session_get(
+                session,
+                url,
+                headers=headers,
+                allow_redirects=True,
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
                 if resp.status == 200 and "pdf" in resp.content_type:
@@ -223,7 +273,12 @@ class InputHandler:
 
             # Fallback: get metadata to find PDF link
             headers = {"Accept": "application/json"}
-            async with session.get(url, headers=headers, allow_redirects=True) as resp:
+            async with await self._session_get(
+                session,
+                url,
+                headers=headers,
+                allow_redirects=True,
+            ) as resp:
                 if resp.status == 200:
                     metadata = await resp.json()
                     links = metadata.get("link", [])

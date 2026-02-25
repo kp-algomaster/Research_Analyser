@@ -44,6 +44,7 @@ class DiagramGenerator:
         max_iterations: int = 3,
         output_format: str = "png",
         output_dir: Optional[str] = None,
+        skip_ssl_verification: bool = False,
     ):
         self.provider = provider
         self.vlm_model = vlm_model
@@ -53,10 +54,11 @@ class DiagramGenerator:
         self.max_iterations = max_iterations
         self.output_format = output_format
         self.output_dir = Path(output_dir) if output_dir else Path("./output/diagrams")
+        self.skip_ssl_verification = skip_ssl_verification
 
     # ── PaperBanana pipeline ───────────────────────────────────────────────────
 
-    def _make_pipeline(self, diagram_type: str):
+    def _make_pipeline(self, diagram_type: str, force_skip_ssl: bool = False):
         """Create a fresh PaperBananaPipeline for each diagram call.
 
         A fresh instance is required because PaperBanana assigns a single
@@ -80,6 +82,10 @@ class DiagramGenerator:
                 "GOOGLE_API_KEY is not set. "
                 "Add your Google API key in the Configuration page."
             )
+
+        if self.skip_ssl_verification or force_skip_ssl:
+            os.environ["SKIP_SSL_VERIFICATION"] = "true"
+            os.environ["PYTHONHTTPSVERIFY"] = "0"
 
         # Give each diagram type its own subdirectory so concurrent runs
         # never share an output path.
@@ -213,6 +219,50 @@ class DiagramGenerator:
 
     # ── Core pipeline runner ───────────────────────────────────────────────────
 
+    @staticmethod
+    def _is_ssl_or_connect_error(exc: Exception) -> bool:
+        """Return True for transport errors that are commonly fixed by SSL-skip."""
+        seen: set[int] = set()
+        cur: Exception | None = exc
+        while cur is not None and id(cur) not in seen:
+            seen.add(id(cur))
+            text = f"{type(cur).__name__}: {cur}".lower()
+            if any(
+                token in text
+                for token in (
+                    "ssl",
+                    "certificate verify failed",
+                    "connecterror",
+                    "retryerror",
+                    "tls",
+                    "handshake",
+                )
+            ):
+                return True
+            nxt = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+            cur = nxt if isinstance(nxt, Exception) else None
+        return False
+
+    async def _generate_with_pipeline(
+        self,
+        diagram_type: str,
+        context: str,
+        communicative_intent: str,
+        pb_diagram_type: str,
+        force_skip_ssl: bool = False,
+    ):
+        from paperbanana import GenerationInput, DiagramType as PBDiagramType
+
+        pipeline = self._make_pipeline(diagram_type, force_skip_ssl=force_skip_ssl)
+        pb_dtype = getattr(PBDiagramType, pb_diagram_type, PBDiagramType.METHODOLOGY)
+        return await pipeline.generate(
+            GenerationInput(
+                source_context=context[:4000],
+                communicative_intent=communicative_intent,
+                diagram_type=pb_dtype,
+            )
+        )
+
     async def _run_pipeline(
         self,
         diagram_type: str,
@@ -225,19 +275,68 @@ class DiagramGenerator:
         output_path = self.output_dir / f"{diagram_type}.{self.output_format}"
 
         try:
-            from paperbanana import GenerationInput, DiagramType as PBDiagramType
-
-            pipeline = self._make_pipeline(diagram_type)
-            pb_dtype = getattr(PBDiagramType, pb_diagram_type, PBDiagramType.METHODOLOGY)
-
-            result = await pipeline.generate(
-                GenerationInput(
-                    source_context=context[:4000],
-                    communicative_intent=communicative_intent,
-                    diagram_type=pb_dtype,
-                )
+            result = await self._generate_with_pipeline(
+                diagram_type=diagram_type,
+                context=context,
+                communicative_intent=communicative_intent,
+                pb_diagram_type=pb_diagram_type,
             )
 
+        except Exception as first_exc:
+            can_retry_ssl = (
+                not self.skip_ssl_verification and self._is_ssl_or_connect_error(first_exc)
+            )
+            if not can_retry_ssl:
+                logger.warning(
+                    "%s diagram (PaperBanana) failed — using matplotlib fallback. Error: %s",
+                    diagram_type, first_exc,
+                )
+                return self._generate_fallback_diagram(
+                    diagram_type=diagram_type,
+                    title=content.title,
+                    source_context=context,
+                    error=str(first_exc),
+                    stats={
+                        "sections": len(content.sections),
+                        "equations": len(content.equations),
+                        "tables": len(content.tables),
+                        "figures": len(content.figures),
+                    },
+                )
+
+            logger.warning(
+                "%s diagram failed with SSL/connect error; retrying once with SSL verification disabled. Error: %s",
+                diagram_type,
+                first_exc,
+            )
+            try:
+                result = await self._generate_with_pipeline(
+                    diagram_type=diagram_type,
+                    context=context,
+                    communicative_intent=communicative_intent,
+                    pb_diagram_type=pb_diagram_type,
+                    force_skip_ssl=True,
+                )
+            except Exception as retry_exc:
+                logger.warning(
+                    "%s diagram (PaperBanana) retry failed — using matplotlib fallback. Error: %s",
+                    diagram_type,
+                    retry_exc,
+                )
+                return self._generate_fallback_diagram(
+                    diagram_type=diagram_type,
+                    title=content.title,
+                    source_context=context,
+                    error=str(retry_exc),
+                    stats={
+                        "sections": len(content.sections),
+                        "equations": len(content.equations),
+                        "tables": len(content.tables),
+                        "figures": len(content.figures),
+                    },
+                )
+
+        try:
             # Copy PaperBanana's output to our standardised path.
             # result.image_path lives inside the per-type subdir created by
             # _make_pipeline(); we copy it to the top-level output_dir so
@@ -259,7 +358,7 @@ class DiagramGenerator:
 
         except Exception as exc:
             logger.warning(
-                "%s diagram (PaperBanana) failed — using matplotlib fallback. Error: %s",
+                "%s diagram output handling failed — using matplotlib fallback. Error: %s",
                 diagram_type, exc,
             )
             return self._generate_fallback_diagram(

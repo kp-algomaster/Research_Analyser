@@ -19,6 +19,7 @@ diagrams:
   max_iterations: 3
   output_format: "png"
   resolution: "2k"
+  skip_ssl_verification: false
 
 review:
   llm_provider: "openai"

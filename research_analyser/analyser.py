@@ -59,6 +59,7 @@ class ResearchAnalyser:
             max_iterations=self.config.diagrams.max_iterations,
             output_format=self.config.diagrams.output_format,
             output_dir=str(Path(self.config.app.output_dir) / "diagrams"),
+            skip_ssl_verification=self.config.diagrams.skip_ssl_verification,
         )
         self.reviewer = PaperReviewer(
             llm_provider=self.config.review.llm_provider,

@@ -27,6 +27,7 @@ class DiagramConfig(BaseModel):
     max_iterations: int = 3
     output_format: str = "png"
     resolution: str = "2k"
+    skip_ssl_verification: bool = False
 
 
 class TTSConfig(BaseModel):
@@ -113,5 +114,10 @@ class Config(BaseSettings):
         if config_file.exists():
             with open(config_file) as f:
                 file_config = yaml.safe_load(f) or {}
+
+        skip_ssl_env = str(os.getenv("SKIP_SSL_VERIFICATION", "")).strip().lower()
+        if skip_ssl_env in {"1", "true", "yes", "on"}:
+            diagrams = file_config.setdefault("diagrams", {})
+            diagrams["skip_ssl_verification"] = True
 
         return cls(**file_config)

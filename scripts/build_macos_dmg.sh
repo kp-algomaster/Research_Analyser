@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ ! -d ".venv312" ]]; then
-  echo "Missing .venv312. Create it first: python3.12 -m venv .venv312"
+  echo "Missing .venv312. Create it first: python3 -m venv .venv312"
   exit 1
 fi
 
@@ -113,6 +113,11 @@ pyinstaller \
 rm -f "packaging/python312.tar.gz"
 
 APP_PATH="$DIST_DIR/${APP_NAME}.app"
+
+# ── Ad-hoc Sign the App Bundle ────────────────────────────────────────────────
+echo "Ad-hoc signing the app bundle to prevent Gatekeeper issues on local machine..."
+codesign --force --deep --sign - "$APP_PATH"
+
 TMP_DMG="$DIST_DIR/${APP_NAME}-tmp.dmg"
 DMG_PATH="$DIST_DIR/${APP_NAME}.dmg"
 

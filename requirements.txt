@@ -17,6 +17,8 @@ PyMuPDF>=1.23
 # Diagram Generation - PaperBanana
 # Install separately: pip install paperbanana
 # Or: pip install paperbanana[google] for Gemini free tier
+google-genai>=0.1.0
+google-generativeai>=0.8.0
 
 # STORM Wikipedia-style report generation
 knowledge-storm>=1.0.0

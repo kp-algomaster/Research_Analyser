@@ -36,7 +36,7 @@ from pathlib import Path
 _APP_SUPPORT    = Path.home() / ".researchanalyser"
 _VENV           = _APP_SUPPORT / "venv"
 # Bump the suffix to force a reinstall after major dependency changes.
-_SETUP_MARKER   = _APP_SUPPORT / ".setup_v2_complete"
+_SETUP_MARKER   = _APP_SUPPORT / ".setup_v3_complete"
 _OUTPUT_DIR     = Path.home() / "ResearchAnalyserOutput"
 # Extracted standalone Python 3.12 (from the bundled tarball in the .app).
 _BUNDLED_PYTHON = _APP_SUPPORT / "python312"
@@ -336,7 +336,8 @@ _PACKAGES = [
     ("Pillow", ["install", "Pillow>=10.0"]),
     ("matplotlib", ["install", "matplotlib>=3.8"]),
     ("soundfile", ["install", "soundfile>=0.12"]),
-    ("google-genai", ["install", "google-genai>=1.0"]),
+    ("google-genai", ["install", "google-genai>=0.1.0"]),
+    ("google-generativeai", ["install", "google-generativeai>=0.8.0"]),
     ("paperbanana", ["install", "paperbanana[dev,openai,google] @ git+https://github.com/llmsresearch/paperbanana.git"]),
     ("huggingface_hub", ["install", "huggingface-hub>=0.23"]),
     ("transformers", ["install", "transformers>=4.40"]),
