@@ -909,25 +909,32 @@ def show_text_to_diagrams() -> None:
                 elif _td_m == "matplotlib":
                     _td_prompt = (
                         "Write Python matplotlib code to visualise the description below.\n"
-                        "Strict rules:\n"
-                        "• Import ONLY matplotlib.pyplot as plt and numpy as np\n"
-                        "• First line after imports: plt.style.use('dark_background')\n"
+                        "STRICT RULES:\n"
+                        "• Do NOT write any import statements — plt and np are already available\n"
+                        "• First line must be: plt.style.use('dark_background')\n"
                         "• Do NOT call plt.show() or plt.savefig()\n"
-                        "• Do NOT open files or use subprocess or os\n"
+                        "• Do NOT open files, use subprocess, os, or sys\n"
                         "• End with plt.tight_layout()\n"
-                        "Return ONLY the Python code — no explanation, no markdown fences.\n\n"
+                        "• Return ONLY executable Python code — no import lines, no explanation, no markdown fences\n\n"
                         + _tdv
                     )
                     with st.spinner("Generating Matplotlib figure via Gemini…"):
                         _td_code = ""
                         try:
                             _td_code = _td_strip(_td_llm(_td_prompt), "python")
+                            import re as _td_re_mpl  # noqa: PLC0415
                             import matplotlib as _td_mpl  # noqa: PLC0415
                             _td_mpl.use("Agg")
                             import matplotlib.pyplot as _td_plt  # noqa: PLC0415
                             import numpy as _td_np  # noqa: PLC0415
                             import io as _td_io  # noqa: PLC0415
                             import builtins as _td_bi  # noqa: PLC0415
+                            # Strip any import lines Gemini emits despite the prompt rules —
+                            # plt and np are injected directly into the exec namespace.
+                            _td_code_exec = "\n".join(
+                                ln for ln in _td_code.splitlines()
+                                if not _td_re_mpl.match(r"^\s*(?:import |from \S+ import )", ln)
+                            )
                             _safe_bi = {k: getattr(_td_bi, k) for k in (
                                 "range", "len", "enumerate", "zip", "list", "dict",
                                 "str", "int", "float", "round", "min", "max", "sum",
@@ -935,7 +942,7 @@ def show_text_to_diagrams() -> None:
                                 "bool", "abs", "any", "all",
                             )}
                             _td_plt.close("all")
-                            exec(_td_code, {"plt": _td_plt, "np": _td_np, "__builtins__": _safe_bi})  # noqa: S102
+                            exec(_td_code_exec, {"plt": _td_plt, "np": _td_np, "__builtins__": _safe_bi})  # noqa: S102
                             _td_buf = _td_io.BytesIO()
                             _td_plt.savefig(_td_buf, format="png", dpi=150, bbox_inches="tight")
                             _td_buf.seek(0)
