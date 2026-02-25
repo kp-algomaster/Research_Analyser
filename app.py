@@ -867,10 +867,28 @@ def show_text_to_diagrams() -> None:
                         if not _bundle:
                             return None, f"render.bundle.mjs not found (searched: {[str(r/_rel) for r in _roots]})"
                         try:
-                            # Resolve `node` binary — macOS PATH may be stripped
-                            _node = _td_subp.run(
-                                ["which", "node"], capture_output=True, text=True
-                            ).stdout.strip() or "node"
+                            # Resolve `node` binary — macOS native app has stripped PATH
+                            # (/usr/bin:/bin only; Homebrew node not found via plain `which`)
+                            # Strategy: login shell -> hardcoded Homebrew paths -> "node"
+                            _node = ""
+                            try:
+                                _node = _td_subp.run(
+                                    ["zsh", "-l", "-c", "which node"],
+                                    capture_output=True, text=True, timeout=10,
+                                ).stdout.strip()
+                            except Exception:
+                                pass
+                            if not _node:
+                                for _np in (
+                                    "/opt/homebrew/bin/node",   # Apple Silicon
+                                    "/usr/local/bin/node",      # Intel Homebrew
+                                    "/opt/local/bin/node",      # MacPorts
+                                ):
+                                    if _TdPath(_np).exists():
+                                        _node = _np
+                                        break
+                            if not _node:
+                                _node = "node"
                             _res = _td_subp.run(
                                 [_node, str(_bundle), theme],
                                 input=code.encode(),
