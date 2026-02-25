@@ -11,6 +11,7 @@ An AI-powered research paper analysis tool that combines **MonkeyOCR 1.5** for P
 - **PDF Upload & URL Input** — Upload PDFs, paste paper URLs (arXiv, Semantic Scholar, DOI), or type a local file path directly in the app window
 - **Intelligent OCR Extraction** — MonkeyOCR 1.5 extracts text, equations (LaTeX), tables, and figures with state-of-the-art accuracy
 - **AI Diagram Generation** — PaperBanana (Retriever → Planner → Stylist → Visualizer → Critic pipeline) generates methodology diagrams, architecture overviews, and results plots using Gemini VLM + Imagen; configurable refinement iterations, auto-refine, and input optimisation
+- **Text to Diagrams** — Dedicated page for generating diagrams from any text description using four engines: **PaperBanana** (publication-quality images), **Mermaid** (flowcharts, sequences, class diagrams, ER, Gantt, mindmaps — rendered via [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) with 15 built-in themes, fully offline), **Graphviz DOT** (directed/undirected graphs, cluster layouts), and **Matplotlib** (data charts, bar graphs, scientific figures via sandboxed code execution)
 - **Agentic Paper Review** — LangGraph 9-node workflow with ML-calibrated scoring (Soundness, Presentation, Contribution)
 - **STORM Wikipedia Report** — Stanford OVAL's knowledge-storm generates a cited Wikipedia-style article about the paper's topic, grounded in the paper's own extracted content
 - **PaperReview.ai Comparison** — Upload external review JSON from [PaperReview.ai](https://paperreview.ai) to compare scores against local review
@@ -308,8 +309,81 @@ The Streamlit UI has three pages (navigation in the left sidebar):
 | Page | What it does |
 |------|-------------|
 | **Analyse Paper** | Upload a PDF, enter an arXiv/DOI URL, or paste a local file path. Choose per-run options (diagrams, peer review, audio narration, STORM report), select diagram types (Methodology / Architecture / Results), click **Analyse Paper** |
+| **Text to Diagrams** | Generate diagrams from any text description — choose engine, configure options, click **Generate Diagram**. See [Text to Diagrams](#text-to-diagrams) below for full details. |
 | **Configuration** | Set API keys (Google, OpenAI, Tavily, HuggingFace); choose OCR variant, review LLM, diagram LLM provider, VLM model, image model; configure PaperBanana refinement iterations, auto-refine, and input optimisation; enable STORM / TTS; set output paths. PaperBanana installation status shown live. Keys persist to the session; for permanent storage use `~/.researchanalyser/.env`. |
 | **Server Management** | Start/stop the FastAPI backend, inspect connection status and device badges |
+
+### Text to Diagrams
+
+The **Text to Diagrams** page generates diagrams from a free-text description without needing a research PDF. Choose one of four engines:
+
+#### 1. PaperBanana (default — publication quality)
+
+Runs the full PaperBanana Critic–Visualiser pipeline via Gemini. Outputs high-resolution images suitable for papers and presentations.
+
+| Option | Values |
+|--------|--------|
+| Diagram type | Methodology, Architecture, Results |
+
+Requires a Google API key. No Node.js dependency.
+
+---
+
+#### 2. Mermaid — via [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid)
+
+Gemini generates the Mermaid DSL; the diagram is rendered **locally** using [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) — a zero-DOM, fully themeable Node.js renderer. No internet connection required after setup.
+
+| Option | Values |
+|--------|--------|
+| **Subtype** | `flowchart`, `sequenceDiagram`, `classDiagram`, `erDiagram`, `gantt`, `mindmap` |
+| **Theme** | 15 built-in themes (see table below) |
+
+**Available themes:**
+
+| Theme | Style |
+|-------|-------|
+| `github-dark` | GitHub dark (default) |
+| `github-light` | GitHub light |
+| `tokyo-night` | Tokyo Night dark |
+| `tokyo-night-storm` | Tokyo Night Storm |
+| `tokyo-night-light` | Tokyo Night light |
+| `catppuccin-mocha` | Catppuccin Mocha dark |
+| `catppuccin-latte` | Catppuccin Latte light |
+| `nord` | Nord dark |
+| `nord-light` | Nord light |
+| `dracula` | Dracula |
+| `solarized-dark` | Solarized dark |
+| `solarized-light` | Solarized light |
+| `one-dark` | One Dark |
+| `zinc-dark` | Zinc dark |
+| `zinc-light` | Zinc light |
+
+Downloads available: **SVG**, **PNG** (if `cairosvg` installed), **.mmd source**.
+On syntax error, Gemini automatically retries with a simplified strict prompt.
+
+**Requirement:** Node.js ≥ 18 installed on the machine running the app. The bundled `render.bundle.mjs` is pre-built — no `npm install` needed at runtime.
+
+---
+
+#### 3. Graphviz DOT
+
+Gemini writes a DOT-language digraph rendered with Streamlit's built-in `st.graphviz_chart()`.
+
+| Option | Values |
+|--------|--------|
+| **Graph direction** | `LR` (left→right), `TB` (top→bottom), `RL` (right→left), `BT` (bottom→top) |
+
+Download: **.dot source**.
+
+---
+
+#### 4. Matplotlib (via Gemini)
+
+Gemini writes Python plotting code executed in a **sandboxed namespace** (no `import` statements; only `plt` and `np` are available). Best for bar charts, line plots, and scientific figures.
+
+Download: **PNG** of the rendered figure.
+
+---
 
 ### Python API
 
@@ -389,6 +463,7 @@ See [docs/configuration.md](docs/configuration.md) for full configuration option
 | MonkeyOCR 1.5 | [Yuliang-Liu/MonkeyOCR](https://github.com/Yuliang-Liu/MonkeyOCR) | PDF/document content extraction |
 | PaperBanana | [llmsresearch/paperbanana](https://github.com/llmsresearch/paperbanana) | AI diagram generation |
 | PaperBanana (Official) | [dwzhu-pku/PaperBanana](https://github.com/dwzhu-pku/PaperBanana) | Original research implementation |
+| beautiful-mermaid | [lukilabs/beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) | Themeable Mermaid SVG renderer (15 themes, offline) |
 | Agentic Paper Review | [debashis1983/agentic-paper-review](https://github.com/debashis1983/agentic-paper-review) | Open-source paper reviewer |
 | Qwen3-TTS | [QwenLM/Qwen3-TTS](https://huggingface.co/Qwen/Qwen3-TTS) | Text-to-speech audio narration |
 | PaperReview.ai | [paperreview.ai](https://paperreview.ai/) | Stanford Agentic Reviewer (web) |

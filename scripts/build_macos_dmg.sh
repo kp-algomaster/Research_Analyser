@@ -77,6 +77,14 @@ rm -rf "$DIST_DIR" "$BUILD_DIR" "${APP_NAME}.spec"
 # Remove stale bytecode caches so PyInstaller bundles freshly compiled .pyc files
 find . -type d -name "__pycache__" -not -path "./.venv*" -exec rm -rf {} + 2>/dev/null || true
 
+# ── Generate custom app icon ───────────────────────────────────────────────────
+echo "Generating app icon…"
+python3 packaging/make_icon.py
+
+# ── Bundle beautiful-mermaid Node.js renderer ──────────────────────────────────
+echo "Bundling beautiful-mermaid renderer…"
+(cd packaging/beautiful_mermaid && npm install --silent && npm run build --silent)
+
 # ── PyInstaller: LIGHTWEIGHT bundle ───────────────────────────────────────────
 # Heavy ML/data deps (torch, streamlit, langchain, scipy, …) are NOT bundled.
 # They are installed into ~/.researchanalyser/venv by the launcher on first run.
@@ -87,6 +95,7 @@ pyinstaller \
   --windowed \
   --strip \
   --name "$APP_NAME" \
+  --icon "packaging/icon.icns" \
   --osx-bundle-identifier "com.research.analyser" \
   --add-data "app.py:." \
   --add-data "config.yaml:." \
@@ -94,6 +103,7 @@ pyinstaller \
   --add-data "research_analyser:research_analyser" \
   --add-data ".streamlit:.streamlit" \
   --add-data "packaging/python312.tar.gz:." \
+  --add-data "packaging/beautiful_mermaid/render.bundle.mjs:packaging/beautiful_mermaid" \
   --collect-all webview \
   --hidden-import webview \
   --hidden-import webview.platforms.cocoa \

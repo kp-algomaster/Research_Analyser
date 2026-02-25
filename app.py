@@ -636,8 +636,7 @@ _TD_MODEL_CAPS = {
     ),
     "mermaid": (
         "**Mermaid** — LLM writes Mermaid DSL (flowcharts, sequences, class diagrams, Gantt, mindmaps).  "
-        "Rendered client-side via Mermaid.js.  "
-        "[mermaid.js.org](https://mermaid.js.org)"
+        "Rendered locally via [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid) — 15 built-in themes, no internet required."
     ),
     "graphviz": (
         "**Graphviz** — LLM writes DOT language (directed/undirected graphs, cluster layouts).  "
@@ -684,6 +683,21 @@ def show_text_to_diagrams() -> None:
                 ["flowchart", "sequenceDiagram", "classDiagram", "erDiagram", "gantt", "mindmap"],
                 key="td_mtype",
                 help="Hint for the LLM — it may override based on your description.",
+            )
+            st.selectbox(
+                "Theme",
+                [
+                    "github-dark", "github-light",
+                    "tokyo-night", "tokyo-night-storm", "tokyo-night-light",
+                    "catppuccin-mocha", "catppuccin-latte",
+                    "nord", "nord-light",
+                    "dracula",
+                    "solarized-dark", "solarized-light",
+                    "one-dark",
+                    "zinc-dark", "zinc-light",
+                ],
+                key="td_mmd_theme",
+                help="Beautiful-mermaid built-in theme for the generated diagram.",
             )
         elif _td_m == "graphviz":
             st.selectbox(
@@ -801,10 +815,10 @@ def show_text_to_diagrams() -> None:
 
                 # ── Mermaid ───────────────────────────────────────────────────
                 if _td_m == "mermaid":
-                    import json as _td_json  # noqa: PLC0415
-                    import base64 as _td_b64  # noqa: PLC0415
-                    import urllib.request as _td_req  # noqa: PLC0415
+                    import subprocess as _td_subp  # noqa: PLC0415
+                    from pathlib import Path as _TdPath  # noqa: PLC0415
                     _mtype = st.session_state.get("td_mtype", "flowchart")
+                    _mmd_theme = st.session_state.get("td_mmd_theme", "github-dark")
 
                     def _mmd_build_prompt(mtype: str, text: str, strict: bool = False) -> str:
                         """Return a Mermaid prompt; strict=True adds extra simplicity constraints."""
@@ -827,26 +841,37 @@ def show_text_to_diagrams() -> None:
                             )
                         return _rules + "\nDescription:\n" + text
 
-                    def _mmd_fetch(code: str) -> tuple:
-                        """Fetch PNG + SVG from mermaid.ink. Returns (png_bytes, svg_bytes, has_error)."""
-                        payload = _td_b64.urlsafe_b64encode(
-                            _td_json.dumps({"code": code, "mermaid": {"theme": "dark"}}).encode()
-                        ).decode()
-                        png_b = svg_b = None
+                    def _mmd_render(code: str, theme: str) -> tuple:
+                        """Render mermaid code via beautiful-mermaid (local Node.js).
+                        Returns (svg_str | None, error_str).
+                        """
+                        # Locate the bundled render script
+                        _candidates = [
+                            _TdPath(__file__).resolve().parent / "packaging" / "beautiful_mermaid" / "render.bundle.mjs",
+                        ]
+                        if hasattr(sys, "_MEIPASS"):
+                            _candidates.insert(0,
+                                _TdPath(sys._MEIPASS) / "packaging" / "beautiful_mermaid" / "render.bundle.mjs"
+                            )
+                        _bundle = next((p for p in _candidates if p.exists()), None)
+                        if not _bundle:
+                            return None, "render.bundle.mjs not found — run: cd packaging/beautiful_mermaid && npm run build"
                         try:
-                            with _td_req.urlopen(
-                                f"https://mermaid.ink/img/{payload}?bgColor=161b22", timeout=15
-                            ) as _r:
-                                png_b = _r.read()
-                            with _td_req.urlopen(
-                                f"https://mermaid.ink/svg/{payload}", timeout=15
-                            ) as _r:
-                                svg_b = _r.read()
-                        except Exception:
-                            pass
-                        # Detect syntax error: mermaid.ink embeds "Syntax error" in the SVG text
-                        has_err = svg_b is not None and b"Syntax error" in svg_b
-                        return png_b, svg_b, has_err
+                            _res = _td_subp.run(
+                                ["node", str(_bundle), theme],
+                                input=code.encode(),
+                                capture_output=True,
+                                timeout=30,
+                            )
+                            if _res.returncode != 0:
+                                return None, _res.stderr.decode()
+                            _svg = _res.stdout.decode()
+                            # Detect render error embedded in SVG text
+                            if "Syntax error" in _svg or "<text" not in _svg:
+                                return None, "Mermaid syntax error in rendered SVG"
+                            return _svg, ""
+                        except Exception as _ex:
+                            return None, str(_ex)
 
                     with st.spinner("Generating Mermaid diagram via Gemini…"):
                         try:
@@ -854,30 +879,42 @@ def show_text_to_diagrams() -> None:
                             _td_code = _td_strip(
                                 _td_llm(_mmd_build_prompt(_mtype, _tdv, strict=False)), "mermaid"
                             )
-                            _mmd_png_bytes, _mmd_svg_bytes, _mmd_err = _mmd_fetch(_td_code)
+                            _mmd_svg, _mmd_err = _mmd_render(_td_code, _mmd_theme)
 
-                            # Attempt 2 — retry with strict/simplified prompt if syntax error detected
-                            if _mmd_err or (_mmd_svg_bytes is None and _mmd_png_bytes is None):
-                                with st.spinner("Syntax error detected — retrying with simplified prompt…"):
+                            # Attempt 2 — retry with strict/simplified prompt if error
+                            if _mmd_err:
+                                with st.spinner("Retrying with simplified prompt…"):
                                     _td_code = _td_strip(
                                         _td_llm(_mmd_build_prompt(_mtype, _tdv, strict=True)), "mermaid"
                                     )
-                                    _mmd_png_bytes, _mmd_svg_bytes, _mmd_err = _mmd_fetch(_td_code)
+                                    _mmd_svg, _mmd_err = _mmd_render(_td_code, _mmd_theme)
 
                             if _mmd_err:
-                                st.error("Mermaid syntax error after retry. Showing raw code below — "
-                                         "you can copy it to mermaid.live to debug.")
+                                st.error(f"Mermaid render error: {_mmd_err}\n\n"
+                                         "You can copy the code to mermaid.live to debug.")
                                 st.code(_td_code, language="text")
-                                _mmd_png_bytes = _mmd_svg_bytes = None
+                                _mmd_svg = None
+
+                            # Try PNG conversion via cairosvg (optional)
+                            _mmd_png_bytes = None
+                            if _mmd_svg:
+                                try:
+                                    import cairosvg as _csv  # noqa: PLC0415
+                                    _mmd_png_bytes = _csv.svg2png(
+                                        bytestring=_mmd_svg.encode(), scale=2.0
+                                    )
+                                except Exception:
+                                    pass  # cairosvg not installed — SVG only
 
                             # Cache so the diagram survives subsequent reruns
                             st.session_state["_td_last_diagram"] = {
                                 "kind": "mermaid_html",
                                 "code": _td_code,
-                                "caption": f"Mermaid · {_mtype}",
+                                "theme": _mmd_theme,
+                                "caption": f"Mermaid · {_mtype} · {_mmd_theme}",
                                 "file_name": f"diagram_{_mtype}",
+                                "svg_bytes": _mmd_svg.encode() if _mmd_svg else None,
                                 "png_bytes": _mmd_png_bytes,
-                                "svg_bytes": _mmd_svg_bytes,
                             }
                         except Exception as _tde:
                             st.error(f"Mermaid generation failed: {_tde}")
@@ -996,25 +1033,33 @@ def show_text_to_diagrams() -> None:
             )
         elif _td_cached["kind"] == "mermaid_html":
             import io as _td_io3  # noqa: PLC0415
+            import re as _td_re3  # noqa: PLC0415
             st.caption(_td_cached.get("caption", "Mermaid"))
-            _mmd_png = _td_cached.get("png_bytes")
-            _mmd_svg = _td_cached.get("svg_bytes")
-            if _mmd_png:
-                # High-res PNG from mermaid.ink — use st.image for sharp full-width display
-                st.image(_td_io3.BytesIO(_mmd_png), use_container_width=True)
-            else:
-                # Fallback: inline iframe (no internet / mermaid.ink unavailable)
-                _mmd_html_fb = (
+            _mmd_svg_b = _td_cached.get("svg_bytes")
+            _mmd_png   = _td_cached.get("png_bytes")
+
+            if _mmd_svg_b:
+                _mmd_svg_str = _mmd_svg_b.decode() if isinstance(_mmd_svg_b, bytes) else _mmd_svg_b
+                # Extract SVG height for iframe sizing
+                _svg_h_match = _td_re3.search(r'height=["\']([0-9.]+)["\']', _mmd_svg_str)
+                _svg_h_pt = float(_svg_h_match.group(1)) if _svg_h_match else 400
+                _iframe_h = max(300, int(_svg_h_pt) + 60)
+                # Display SVG inside a themed HTML frame
+                _mmd_html_disp = (
                     "<!DOCTYPE html><html><head>"
-                    '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>'
-                    "<style>body{background:#0d1117;margin:0;padding:24px}"
-                    ".mermaid{background:#161b22;padding:24px;border-radius:10px}"
+                    "<style>html,body{margin:0;padding:0;background:transparent;overflow:auto}"
+                    "div.wrap{padding:16px 8px;display:flex;justify-content:center}"
+                    "svg{max-width:100%;height:auto}"
                     "</style></head><body>"
-                    f'<div class="mermaid">{_td_cached["code"]}</div>'
-                    "<script>mermaid.initialize({{startOnLoad:true,theme:'dark'}});</script>"
+                    f'<div class="wrap">{_mmd_svg_str}</div>'
                     "</body></html>"
                 )
-                st.components.v1.html(_mmd_html_fb, height=600, scrolling=True)
+                st.components.v1.html(_mmd_html_disp, height=_iframe_h, scrolling=True)
+            elif _mmd_png:
+                st.image(_td_io3.BytesIO(_mmd_png), use_container_width=True)
+            else:
+                st.warning("No diagram rendered — check the Mermaid code below.")
+
             with st.expander("📋 Mermaid code"):
                 st.code(_td_cached["code"], language="text")
             # Download row: PNG · SVG · .mmd
@@ -1029,8 +1074,8 @@ def show_text_to_diagrams() -> None:
                 )
             with _dl_cols[1]:
                 _dl_button(
-                    "⬇  SVG" if _mmd_svg else "⬇  SVG (unavailable)",
-                    _mmd_svg or b"",
+                    "⬇  SVG" if _mmd_svg_b else "⬇  SVG (unavailable)",
+                    _mmd_svg_b or b"",
                     file_name=f"{_base}.svg", mime="image/svg+xml",
                     use_container_width=True, key="_td_dl_mmd_svg",
                 )
