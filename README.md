@@ -89,6 +89,34 @@ streamlit run app.py
 uvicorn research_analyser.api:app --host 0.0.0.0 --port 8000
 ```
 
+### Generate Diagram from Text File (Simple Script)
+
+Use this lightweight helper script when you want to generate a PaperBanana diagram from a plain text file directly.
+
+```bash
+# Create a sample text file
+cat > /tmp/paper_input.txt << 'EOF'
+Describe a method with three stages: data preprocessing, transformer encoding,
+and classifier head. Include key component relationships and data flow.
+EOF
+
+# Generate a methodology diagram
+PYTHONPATH=. .venv312/bin/python scripts/paperbanana_from_text.py \
+  --input /tmp/paper_input.txt \
+  --diagram-type methodology
+
+# If your environment has SSL inspection/proxy issues
+PYTHONPATH=. .venv312/bin/python scripts/paperbanana_from_text.py \
+  --input /tmp/paper_input.txt \
+  --diagram-type methodology \
+  --skip-ssl
+```
+
+The script prints:
+- `DIAGRAM_PATH=...`
+- `IS_FALLBACK=True|False`
+- `ERROR_DETAIL=...` (only when relevant)
+
 ---
 
 ## Distribution Builds
@@ -120,6 +148,9 @@ The app can be packaged as a self-contained native desktop application on all th
 dist/ResearchAnalyser.app   # Standalone .app bundle
 dist/ResearchAnalyser.dmg   # Drag-and-drop disk image (~500 MB)
 ```
+
+> `SKIP_SSL_VERIFICATION` is not required for `./scripts/build_macos_dmg.sh`.
+> It is only a runtime setting for Gemini/PaperBanana network calls inside the app.
 
 **What it produces:** A native macOS `.app` using `WKWebView` via pywebview.  The launcher is a lightweight ~153 MB bundle — all heavy ML dependencies (torch, MonkeyOCR, PaperBanana, …) are installed on first launch into `~/.researchanalyser/venv` and reused on subsequent launches.  Outputs go to `~/ResearchAnalyserOutput/`.  Launcher log at `~/ResearchAnalyserOutput/launcher.log`.
 

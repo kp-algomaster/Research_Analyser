@@ -61,6 +61,7 @@ class ResearchAnalyser:
             output_dir=str(Path(self.config.app.output_dir) / "diagrams"),
             skip_ssl_verification=self.config.diagrams.skip_ssl_verification,
         )
+        self._beautiful_mermaid_dir = Path(__file__).resolve().parent.parent / "packaging" / "beautiful_mermaid"
         self.reviewer = PaperReviewer(
             llm_provider=self.config.review.llm_provider,
             model=self.config.review.model,
@@ -151,15 +152,43 @@ class ResearchAnalyser:
         if task_names:
             _progress(f"🤖  Generating {' & '.join(task_names)}…")
 
+        # Resolve paper-ID for output dir early so diagrams land there too
+        from research_analyser.input_handler import extract_paper_id as _epid
+        _paper_id = _epid(source)
+        _paper_output_dir = Path(self.config.app.output_dir) / _paper_id
+
         tasks = []
         if options.generate_diagrams:
-            tasks.append(
-                self.diagram_generator.generate(content, options.diagram_types)
-            )
+            engine = options.diagram_engine
+            if engine == "beautiful_mermaid":
+                tasks.append(
+                    self._generate_beautiful_mermaid_diagrams(
+                        content, options.diagram_types, _paper_output_dir
+                    )
+                )
+            else:
+                # PaperBanana
+                if not self.config.google_api_key:
+                    logger.warning(
+                        "GOOGLE_API_KEY is not set — skipping PaperBanana diagram generation. "
+                        "Set it in .env or VS Code extension settings."
+                    )
+                else:
+                    # Point diagram output to paper-ID folder
+                    self.diagram_generator.output_dir = _paper_output_dir / "diagrams"
+                    tasks.append(
+                        self.diagram_generator.generate(content, options.diagram_types)
+                    )
         if options.generate_review:
-            tasks.append(
-                self.reviewer.review(content, paper_input.target_venue)
-            )
+            if not self.config.openai_api_key:
+                logger.warning(
+                    "OPENAI_API_KEY is not set — skipping peer review. "
+                    "Set it in .env or VS Code extension settings."
+                )
+            else:
+                tasks.append(
+                    self.reviewer.review(content, paper_input.target_venue)
+                )
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -204,8 +233,10 @@ class ResearchAnalyser:
             metadata=metadata,
         )
 
-        # 8. Save outputs
-        output_dir = Path(self.config.app.output_dir)
+        # 8. Save outputs — use paper-ID subfolder
+        from research_analyser.input_handler import extract_paper_id
+        paper_id = extract_paper_id(source)
+        output_dir = Path(self.config.app.output_dir) / paper_id
         self.report_generator.save_all(report, output_dir)
 
         # 9. Generate STORM Wikipedia-style report (if requested)
@@ -239,6 +270,131 @@ class ResearchAnalyser:
         logger.info(f"Analysis complete in {elapsed:.1f}s. Output: {output_dir}")
 
         return report
+
+    async def _generate_beautiful_mermaid_diagrams(
+        self,
+        content,
+        diagram_types: list[str],
+        output_dir: Path,
+    ) -> list:
+        """Generate diagrams via Beautiful Mermaid (local Node.js renderer).
+
+        Produces Mermaid code from paper content, renders it to SVG using
+        the beautiful-mermaid package, then converts to PNG.
+        """
+        import subprocess
+        from research_analyser.models import GeneratedDiagram
+
+        diagrams_dir = output_dir / "diagrams"
+        diagrams_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prefer bundled script (works with Node.js >=22 where TS
+        # stripping in node_modules is unsupported)
+        render_script = self._beautiful_mermaid_dir / "render.bundle.mjs"
+        if not render_script.exists():
+            render_script = self._beautiful_mermaid_dir / "render.mjs"
+        if not render_script.exists():
+            logger.warning("Beautiful Mermaid render script not found in %s", self._beautiful_mermaid_dir)
+            return []
+
+        results = []
+        for dtype in diagram_types:
+            mermaid_code = self._content_to_mermaid(content, dtype)
+            svg_path = diagrams_dir / f"{dtype}.svg"
+            png_path = diagrams_dir / f"{dtype}.png"
+
+            try:
+                proc = subprocess.run(
+                    ["node", str(render_script), "github-dark"],
+                    input=mermaid_code,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(self._beautiful_mermaid_dir),
+                    timeout=30,
+                )
+                if proc.returncode != 0:
+                    logger.warning("Beautiful Mermaid failed for %s: %s", dtype, proc.stderr)
+                    continue
+
+                svg_path.write_text(proc.stdout, encoding="utf-8")
+
+                # Convert SVG → PNG if cairosvg is available
+                try:
+                    import cairosvg
+                    cairosvg.svg2png(
+                        bytestring=proc.stdout.encode(),
+                        write_to=str(png_path),
+                        output_width=1600,
+                    )
+                    final_path = png_path
+                except ImportError:
+                    final_path = svg_path
+
+                results.append(
+                    GeneratedDiagram(
+                        diagram_type=dtype,
+                        image_path=str(final_path),
+                        caption=f"{dtype.title()} diagram (Beautiful Mermaid): {content.title}",
+                        source_context=mermaid_code[:500],
+                        iterations=1,
+                        format=final_path.suffix.lstrip("."),
+                        is_fallback=False,
+                    )
+                )
+                logger.info("Beautiful Mermaid diagram generated: %s", final_path)
+            except Exception as exc:
+                logger.error("Beautiful Mermaid generation failed for %s: %s", dtype, exc)
+
+        return results
+
+    @staticmethod
+    def _content_to_mermaid(content, diagram_type: str) -> str:
+        """Convert extracted paper content into a Mermaid diagram string."""
+        title = content.title or "Paper"
+
+        if diagram_type == "architecture":
+            sections = [s.title for s in content.sections[:8] if s.title]
+            nodes = []
+            for i, sec in enumerate(sections):
+                safe = sec.replace('"', "'")[:40]
+                nodes.append(f'    S{i}["{safe}"]')
+            edges = [f"    S{i} --> S{i+1}" for i in range(len(sections) - 1)]
+            return (
+                "graph TD\n"
+                + "\n".join(nodes) + "\n"
+                + "\n".join(edges)
+            )
+
+        if diagram_type == "results":
+            tables = content.tables[:5]
+            if tables:
+                items = []
+                for i, t in enumerate(tables):
+                    cap = (t.caption or t.id or f"Table {i+1}").replace('"', "'")[:40]
+                    items.append(f'    T{i}["{cap}"]')
+                return "graph LR\n    Input[\"Data\"] --> Analysis[\"Analysis\"]\n" + "\n".join(
+                    f"    Analysis --> {line.split('[')[0].strip()}" for line in items
+                ) + "\n" + "\n".join(items)
+
+            return (
+                "graph LR\n"
+                "    Input[\"Data\"] --> Analysis[\"Analysis\"] --> Results[\"Results\"]\n"
+            )
+
+        # Default: methodology flowchart
+        sections = [s for s in content.sections if s.title][:10]
+        if not sections:
+            return (
+                f"graph TD\n"
+                f'    A["{title[:40]}"] --> B["Extract"] --> C["Analyse"] --> D["Report"]\n'
+            )
+
+        nodes = []
+        for i, sec in enumerate(sections):
+            safe = sec.title.replace('"', "'")[:40]
+            nodes.append(f'    S{i}["{safe}"]')
+        edges = [f"    S{i} --> S{i+1}" for i in range(len(sections) - 1)]
+        return "graph TD\n" + "\n".join(nodes) + "\n" + "\n".join(edges)
 
     def _extract_methodology_summary(self, content) -> str:
         """Extract methodology summary from sections.

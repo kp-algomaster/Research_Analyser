@@ -709,6 +709,9 @@ pip install -r requirements.txt
 # → dist/ResearchAnalyser.dmg
 ```
 
+> `SKIP_SSL_VERIFICATION` is **not required** for `./scripts/build_macos_dmg.sh`.
+> It is a runtime/network setting for Gemini/PaperBanana API calls inside the app.
+
 **Key PyInstaller flags:**
 - `--windowed` — macOS `.app` bundle (no terminal window)
 - `--collect-all webview` + `--hidden-import webview.platforms.cocoa` — pywebview + PyObjC

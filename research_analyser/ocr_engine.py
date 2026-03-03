@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -20,6 +22,9 @@ from research_analyser.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Apple Silicon MonkeyOCR location
+_APPLE_SILICON_DIR = Path.home() / ".cache" / "research-analyser" / "MonkeyOCR-Apple-Silicon"
 
 # Equation detection patterns
 DISPLAY_EQUATION_PATTERNS = [
@@ -44,6 +49,39 @@ LATEX_SECTION_PATTERN = re.compile(
 )
 
 
+def detect_device() -> str:
+    """Auto-detect compute device: apple_silicon, cuda, or cpu."""
+    # Check for Apple Silicon
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        return "apple_silicon"
+
+    # Check for CUDA
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+
+    return "cpu"
+
+
+def is_apple_silicon_ocr_available() -> bool:
+    """Check if Apple Silicon MonkeyOCR is installed and ready."""
+    if not _APPLE_SILICON_DIR.exists():
+        return False
+    main_py = _APPLE_SILICON_DIR / "main.py"
+    config_yaml = _APPLE_SILICON_DIR / "model_configs_mps.yaml"
+    monkey_dir = _APPLE_SILICON_DIR / "MonkeyOCR"
+    venv = _APPLE_SILICON_DIR / ".venv"
+    return (
+        main_py.exists()
+        and config_yaml.exists()
+        and monkey_dir.exists()
+        and venv.exists()
+    )
+
+
 class OCREngine:
     """Extract structured content from PDF using MonkeyOCR 1.5."""
 
@@ -51,9 +89,21 @@ class OCREngine:
         self.model_name = model_name
         self.device = device
         self._model = None
+        self._detected_device = detect_device() if device == "auto" else device
+        self._use_apple_silicon = (
+            self._detected_device == "apple_silicon"
+            and is_apple_silicon_ocr_available()
+        )
+        if self._use_apple_silicon:
+            logger.info("Apple Silicon MonkeyOCR (MLX) detected — will use accelerated OCR")
 
     def _load_model(self):
-        """Lazy-load the MonkeyOCR model."""
+        """Lazy-load the MonkeyOCR model (standard variant only).
+
+        Apple Silicon variant uses subprocess instead (no model loading).
+        """
+        if self._use_apple_silicon:
+            return  # Apple Silicon uses subprocess, no model to load
         if self._model is not None:
             return
 
@@ -69,10 +119,73 @@ class OCREngine:
         except Exception as e:
             raise ExtractionError(f"Failed to load MonkeyOCR model: {e}")
 
+    def _run_apple_silicon_ocr(self, pdf_path: Path, output_dir: Path) -> None:
+        """Run OCR via the Apple Silicon MonkeyOCR subprocess.
+
+        Uses the Apple Silicon repo's own venv and main.py to process the PDF.
+        Output files ({stem}.md and {stem}_middle.json) are written to output_dir.
+        """
+        venv_python = _APPLE_SILICON_DIR / ".venv" / "bin" / "python"
+        if not venv_python.exists():
+            raise ExtractionError(
+                f"Apple Silicon MonkeyOCR venv not found at {venv_python}. "
+                "Run setup.sh first via MonkeyOCR Manager."
+            )
+
+        # Create a bridge script that uses the Apple Silicon MonkeyOCR
+        # to parse the PDF and write output in our expected format
+        bridge_script = f'''
+import sys
+sys.path.insert(0, "{_APPLE_SILICON_DIR}")
+sys.path.insert(0, "{_APPLE_SILICON_DIR / 'MonkeyOCR'}")
+
+from pathlib import Path
+from magic_pdf.model.custom_model import MonkeyOCR
+
+config_path = "{_APPLE_SILICON_DIR / 'model_configs_mps.yaml'}"
+model = MonkeyOCR(config_path)
+
+pdf_path = sys.argv[1]
+output_dir = sys.argv[2]
+
+model.parse(pdf_path, output_dir=output_dir)
+print("OCR_BRIDGE_SUCCESS")
+'''
+
+        try:
+            result = subprocess.run(
+                [str(venv_python), "-c", bridge_script, str(pdf_path), str(output_dir)],
+                cwd=str(_APPLE_SILICON_DIR),
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 min timeout per document
+                env={
+                    **dict(__import__("os").environ),
+                    "PYTHONPATH": f"{_APPLE_SILICON_DIR}:{_APPLE_SILICON_DIR / 'MonkeyOCR'}",
+                },
+            )
+
+            if result.returncode != 0 or "OCR_BRIDGE_SUCCESS" not in result.stdout:
+                stderr_tail = result.stderr[-1000:] if result.stderr else ""
+                raise ExtractionError(
+                    f"Apple Silicon OCR failed (exit {result.returncode}): {stderr_tail}"
+                )
+
+            logger.info("Apple Silicon OCR completed for %s", pdf_path.name)
+
+        except subprocess.TimeoutExpired:
+            raise ExtractionError(
+                "Apple Silicon OCR timed out (>5 min). Document may be too large."
+            )
+        except ExtractionError:
+            raise
+        except Exception as e:
+            raise ExtractionError(f"Apple Silicon OCR subprocess error: {e}")
+
     async def extract(self, pdf_path: Path) -> ExtractedContent:
         """Full extraction pipeline.
 
-        1. Load PDF, run MonkeyOCR parse
+        1. Load PDF, run MonkeyOCR parse (standard or Apple Silicon)
         2. Merge page results into unified document
         3. Post-process: equation detection, table parsing, figure extraction
         4. Build structured ExtractedContent
@@ -83,7 +196,11 @@ class OCREngine:
             # Run MonkeyOCR parse
             with tempfile.TemporaryDirectory() as tmp_dir:
                 output_dir = Path(tmp_dir)
-                self._model.parse(str(pdf_path), output_dir=str(output_dir))
+
+                if self._use_apple_silicon:
+                    self._run_apple_silicon_ocr(pdf_path, output_dir)
+                else:
+                    self._model.parse(str(pdf_path), output_dir=str(output_dir))
 
                 # Read outputs
                 stem = pdf_path.stem

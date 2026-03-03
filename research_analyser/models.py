@@ -38,6 +38,7 @@ class AnalysisOptions:
     diagram_types: list[str] = field(
         default_factory=lambda: ["methodology", "architecture"]
     )
+    diagram_engine: Literal["paperbanana", "beautiful_mermaid"] = "paperbanana"
     diagram_provider: Literal["openai", "google", "openrouter"] = "google"
     review_dimensions: list[str] = field(
         default_factory=lambda: ["soundness", "presentation", "contribution"]
@@ -244,9 +245,23 @@ class AnalysisReport:
 
     def to_json(self) -> dict:
         """Convert report to JSON-serializable dict."""
+        import json
         from dataclasses import asdict
+        from datetime import datetime as _dt
+        from pathlib import Path as _Path
 
-        return asdict(self)
+        def _default(obj):
+            if isinstance(obj, _dt):
+                return obj.isoformat()
+            if isinstance(obj, _Path):
+                return str(obj)
+            if isinstance(obj, Enum):
+                return obj.value
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+        raw = asdict(self)
+        # Round-trip through json to coerce all values to plain JSON types
+        return json.loads(json.dumps(raw, default=_default))
 
     def save(self, output_dir: str) -> None:
         """Save all outputs to directory."""

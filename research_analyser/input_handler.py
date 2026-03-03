@@ -31,6 +31,45 @@ ARXIV_PATTERNS = [
 DOI_PATTERN = re.compile(r"^10\.\d{4,}/[^\s]+$")
 
 
+def extract_paper_id(source: str) -> str:
+    """Extract a filesystem-safe paper ID from source string.
+
+    Examples:
+        'https://arxiv.org/abs/2511.19740' -> '2511.19740'
+        '2511.19740'                       -> '2511.19740'
+        '10.1234/something'                -> '10.1234_something'
+        'https://example.com/paper.pdf'    -> 'paper'
+        '/path/to/my_paper.pdf'            -> 'my_paper'
+    """
+    # arXiv patterns
+    for pattern in ARXIV_PATTERNS:
+        m = pattern.search(source)
+        if m:
+            return m.group(1)
+
+    # DOI
+    doi_match = DOI_PATTERN.match(source)
+    if doi_match:
+        return source.replace("/", "_")
+
+    # Local PDF
+    p = Path(source)
+    if p.suffix.lower() == ".pdf":
+        return p.stem
+
+    # URL — try filename from path
+    if source.startswith(("http://", "https://")):
+        from urllib.parse import urlparse
+        url_path = urlparse(source).path
+        fname = Path(url_path).stem
+        if fname and fname != "/":
+            return fname
+
+    # Fallback: sanitise the source string
+    safe = re.sub(r'[^\w.\-]', '_', source)[:80]
+    return safe or "unknown_paper"
+
+
 class InputHandler:
     """Resolve and fetch papers from various input sources."""
 

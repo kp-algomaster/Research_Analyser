@@ -10,6 +10,11 @@ fi
 
 source .venv312/bin/activate
 
+if [[ -n "${SKIP_SSL_VERIFICATION:-}" ]]; then
+  echo "Note: SKIP_SSL_VERIFICATION is a runtime setting for API calls;"
+  echo "      it is not required for DMG packaging and is ignored by this build script."
+fi
+
 python -m pip install --upgrade pip
 python -m pip install pyinstaller
 
@@ -124,86 +129,10 @@ DMG_PATH="$DIST_DIR/${APP_NAME}.dmg"
 # ── Stage drag-to-install layout ──────────────────────────────────────────────
 STAGE_DIR="$DIST_DIR/dmg_stage"
 rm -rf "$STAGE_DIR"
-mkdir -p "$STAGE_DIR/.background"
+mkdir -p "$STAGE_DIR"
 
 cp -r "$APP_PATH" "$STAGE_DIR/"
 ln -s /Applications "$STAGE_DIR/Applications"
-
-# Generate background image — Ollama-style: clean white, thin curved arrow, no wells.
-# Canvas: 1080×640 px saved at 144 dpi → displays at 540×320 pt in Finder (Retina-sharp).
-# Window bounds {200,100,740,420} = 540×320 pt.
-# Icon centres (pt): left=(135,140), right=(405,140)  → (2× px): (270,280), (810,280).
-BG_PATH="$STAGE_DIR/.background/background.png"
-python3 -c "
-import struct, zlib, math
-bg = '$BG_PATH'
-W, H = 1080, 640   # 2x canvas; dpi=(144,144) makes Finder render at 540x320 pt
-try:
-    from PIL import Image, ImageDraw, ImageFont
-
-    img = Image.new('RGB', (W, H), (255, 255, 255))
-    d   = ImageDraw.Draw(img)
-
-    # ── Thin curved arrow (Ollama-style) ──────────────────────────────────────
-    # Cubic bezier: starts right of left icon, arcs up, ends left of right icon.
-    # All coords in 2x pixels.  Icon centres: left=(270,280), right=(810,280).
-    def bez(t, p0, p1, p2, p3):
-        mt = 1 - t
-        return (mt**3*p0[0] + 3*mt**2*t*p1[0] + 3*mt*t**2*p2[0] + t**3*p3[0],
-                mt**3*p0[1] + 3*mt**2*t*p1[1] + 3*mt*t**2*p2[1] + t**3*p3[1])
-
-    P0 = (410, 292)   # start — right of left icon
-    P1 = (510, 195)   # ctrl1  — pull curve upward
-    P2 = (600, 200)   # ctrl2  — keep arc high
-    P3 = (680, 290)   # end   — left of right icon
-
-    STEPS = 400
-    pts = [(round(bez(i/STEPS, P0, P1, P2, P3)[0]),
-            round(bez(i/STEPS, P0, P1, P2, P3)[1])) for i in range(STEPS+1)]
-
-    INK = (36, 36, 36)   # near-black
-    SW  = 7              # stroke width in 2x px (≈3.5 pt)
-    try:
-        d.line(pts, fill=INK, width=SW, joint='curve')
-    except TypeError:
-        d.line(pts, fill=INK, width=SW)
-
-    # Arrowhead — V-shape aligned to tangent at P3 (direction P2→P3)
-    tx = P3[0] - P2[0]; ty = P3[1] - P2[1]
-    tl = math.sqrt(tx*tx + ty*ty)
-    tx /= tl; ty /= tl
-    ang = math.atan2(ty, tx)
-    L = 38; A = math.radians(25)
-    w0 = (P3[0] - L*math.cos(ang - A), P3[1] - L*math.sin(ang - A))
-    w1 = (P3[0] - L*math.cos(ang + A), P3[1] - L*math.sin(ang + A))
-    d.line([w0, P3], fill=INK, width=SW)
-    d.line([P3, w1], fill=INK, width=SW)
-
-    img.save(bg, dpi=(144, 144))
-    print('  Background: OK (2x Retina, Ollama-style)')
-
-except Exception as _e:
-    print(f'  Pillow failed ({_e}); using stdlib fallback')
-    try:
-        rows = bytearray()
-        for y in range(H):
-            rows += b'\x00'
-            for x in range(W):
-                rows += bytes([255, 255, 255])
-        compressed = zlib.compress(bytes(rows), 9)
-        def chunk(t, d):
-            crc = zlib.crc32(t+d) & 0xFFFFFFFF
-            return struct.pack('>I', len(d)) + t + d + struct.pack('>I', crc)
-        ihdr = struct.pack('>IIBBBBB', W, H, 8, 2, 0, 0, 0)
-        open(bg, 'wb').write(
-            b'\x89PNG\r\n\x1a\n'
-            + chunk(b'IHDR', ihdr)
-            + chunk(b'IDAT', compressed)
-            + chunk(b'IEND', b''))
-        print('  Background: stdlib fallback (plain white)')
-    except Exception as _e2:
-        print(f'  Background skipped: {_e2}')
-" 2>&1 || true
 
 # ── Writable DMG from staged directory ────────────────────────────────────────
 rm -f "$TMP_DMG" "$DMG_PATH"
@@ -224,13 +153,6 @@ ATTACH_DEV=$(echo "$ATTACH_OUT" | awk '/\/dev\/disk/{print $1; exit}')
 echo "  Attached as $ATTACH_DEV → $MOUNT_DIR"
 sleep 3
 
-# Build the background AppleScript clause only if the image was created
-if [[ -f "$BG_PATH" ]]; then
-  BG_SCRIPT='set background picture of icon view options of container window to file ".background:background.png"'
-else
-  BG_SCRIPT=''
-fi
-
 osascript <<APPLESCRIPT
 tell application "Finder"
   tell disk "$APP_NAME"
@@ -241,9 +163,9 @@ tell application "Finder"
     set bounds of container window to {200, 100, 740, 420}
     set the icon size of the icon view options of container window to 100
     set the arrangement of the icon view options of container window to not arranged
-    ${BG_SCRIPT}
     set position of item "${APP_NAME}.app" of container window to {135, 140}
     set position of item "Applications" of container window to {405, 140}
+
     close
     open
     update without registering applications
@@ -253,6 +175,10 @@ end tell
 APPLESCRIPT
 
 sync
+# Remove filesystem/event metadata folders from the mounted image so they don't
+# appear as extra icons in the DMG window.
+rm -rf "$MOUNT_DIR/.fseventsd" "$MOUNT_DIR/.Trashes" "$MOUNT_DIR/.hidden" "$MOUNT_DIR/.background" 2>/dev/null || true
+
 # Detach by the exact device captured at attach time (not mount-point name,
 # which can be ambiguous when stale mounts from prior builds still linger).
 hdiutil detach "$ATTACH_DEV" 2>/dev/null \

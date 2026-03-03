@@ -540,7 +540,9 @@ def _env_flag(name: str) -> bool:
 
 
 def _should_skip_ssl() -> bool:
-    return bool(_cfg("skip_ssl_verification", _env_flag("SKIP_SSL_VERIFICATION")))
+    # Environment flag has priority so a shell/.env override is always honored,
+    # even if an older session_state value exists.
+    return _env_flag("SKIP_SSL_VERIFICATION") or bool(_cfg("skip_ssl_verification", False))
 
 
 def _apply_skip_ssl_env() -> None:
@@ -723,6 +725,9 @@ _TD_MODEL_CAPS = {
 
 
 def show_text_to_diagrams() -> None:
+    if st.session_state.get("nav_page") != "diagrams":
+        return
+
     st.markdown(
         '<div class="hero"><p class="hero-title">Text to Diagrams</p>'
         '<p class="hero-sub">Generate research diagrams from a text description using PaperBanana, beautiful-mermaid (15 themes), Graphviz, or Matplotlib</p></div>',
@@ -779,6 +784,11 @@ def show_text_to_diagrams() -> None:
         else:
             st.write("")
 
+    # If user switches away from PaperBanana, stop polling stale PB run-state
+    # so Mermaid/Graphviz/Matplotlib pages do not rerun continuously.
+    if _td_m != "paperbanana":
+        st.session_state.pop("_td_run_state", None)
+
     st.caption(_TD_MODEL_CAPS[_td_m])
 
     _td_text = st.text_area(
@@ -806,6 +816,27 @@ def show_text_to_diagrams() -> None:
     if _td_run:
         st.session_state.pop("_td_last_diagram", None)
         st.session_state.pop("_td_run_state", None)
+
+    # Restore last PaperBanana output from disk when session cache is missing
+    # (e.g. after tab switches, Streamlit hot-reload, or native-app reruns).
+    if "_td_last_diagram" not in st.session_state:
+        _td_restore_root = Path(_cfg("output_dir", _DEFAULT_OUTPUT)) / "diagrams" / "custom"
+        _td_restore_candidates: list[Path] = []
+        if _td_restore_root.exists():
+            for _td_dtype in ("methodology", "architecture", "results"):
+                _td_p = _td_restore_root / _td_dtype / f"{_td_dtype}.png"
+                if _td_p.exists():
+                    _td_restore_candidates.append(_td_p)
+
+            if _td_restore_candidates:
+                _td_latest = max(_td_restore_candidates, key=lambda p: p.stat().st_mtime)
+                _td_latest_dtype = _td_latest.parent.name
+                st.session_state["_td_last_diagram"] = {
+                    "kind": "image_path",
+                    "path": str(_td_latest),
+                    "caption": f"PaperBanana · {_td_latest_dtype}",
+                    "file_name": f"diagram_{_td_latest_dtype}.png",
+                }
 
     if _td_run and st.session_state.get("td_text", "").strip():
         _tdv       = st.session_state["td_text"].strip()
@@ -884,18 +915,31 @@ def show_text_to_diagrams() -> None:
                 def _td_llm(prompt: str) -> str:
                     """Call Gemini 2.0 Flash; try new google-genai SDK first."""
                     _apply_skip_ssl_env()
+                    _skip_ssl = _should_skip_ssl()
                     try:
                         from google import genai as _gai  # noqa: PLC0415
                         import httpx  # noqa: PLC0415
-                        
-                        http_options = {}
-                        if _should_skip_ssl():
-                            http_options["httpx_client"] = httpx.Client(verify=False)
-                            
-                        return _gai.Client(api_key=_td_gkey, http_options=http_options).models.generate_content(
-                            model="gemini-2.0-flash", contents=prompt
-                        ).text.strip()
+
+                        _http_client = None
+                        try:
+                            _client_kwargs = {"api_key": _td_gkey}
+                            if _skip_ssl:
+                                _http_client = httpx.Client(verify=False)
+                                _client_kwargs["http_options"] = {"httpx_client": _http_client}
+
+                            _resp = _gai.Client(**_client_kwargs).models.generate_content(
+                                model="gemini-2.0-flash", contents=prompt
+                            )
+                            return (_resp.text or "").strip()
+                        finally:
+                            if _http_client is not None:
+                                _http_client.close()
                     except Exception:
+                        # Legacy SDK path does not reliably honor SSL-skip/custom verify settings.
+                        # When SSL-skip is requested, avoid falling back to it.
+                        if _skip_ssl:
+                            raise
+
                         import google.generativeai as _ogai  # noqa: PLC0415
                         _ogai.configure(api_key=_td_gkey)
                         return _ogai.GenerativeModel("gemini-2.0-flash").generate_content(
@@ -1014,6 +1058,20 @@ def show_text_to_diagrams() -> None:
                                     )
                                     _mmd_svg, _mmd_err = _mmd_render(_td_code, _mmd_theme)
 
+                            # Attempt 3 — compatibility fallback for renderers that don't
+                            # support Mermaid mindmap headers.
+                            if _mmd_err and (
+                                _mtype == "mindmap"
+                                or "Invalid mermaid header" in _mmd_err
+                                or "Expected \"graph" in _mmd_err
+                            ):
+                                with st.spinner("Mindmap unsupported by renderer — retrying as flowchart…"):
+                                    _td_code = _td_strip(
+                                        _td_llm(_mmd_build_prompt("flowchart", _tdv, strict=True)),
+                                        "mermaid",
+                                    )
+                                    _mmd_svg, _mmd_err = _mmd_render(_td_code, _mmd_theme)
+
                             if _mmd_err:
                                 st.error(f"Mermaid render error: {_mmd_err}\n\n"
                                          "You can copy the code to mermaid.live to debug.")
@@ -1127,20 +1185,29 @@ def show_text_to_diagrams() -> None:
                                     st.code(_td_code, language="python")
 
     # ── Live Text→Diagram progress (PaperBanana only) ────────────────────────
-    _td_bg = st.session_state.get("_td_run_state")
+    _td_bg = st.session_state.get("_td_run_state") if _td_m == "paperbanana" else None
     if _td_bg:
         import time as _td_poll_time  # noqa: PLC0415
 
         _td_dtype = _td_bg.get("diagram_type", "methodology")
         _td_prog = _td_bg.get("diagram_progress", {})
         _td_status = _td_prog.get(_td_dtype, "⏳ Queued…")
-        st.info(f"PaperBanana status · {_td_dtype.title()}: {_td_status}")
 
         _td_intermediate = _collect_pb_intermediate_images(
             _td_bg.get("output_dir", _DEFAULT_OUTPUT),
             [_td_dtype],
             diagrams_root=_td_bg.get("diagram_root"),
         ).get(_td_dtype, [])
+        _td_max_iters = max(1, int(_cfg("max_iterations", 3)))
+        _td_iter_done = len(_td_intermediate)
+        _td_iter_live = min(_td_iter_done, _td_max_iters)
+        _td_iter_suffix = (
+            f" · Iteration {_td_iter_live}/{_td_max_iters}"
+            if _td_iter_live > 0 and not _td_bg.get("done")
+            else ""
+        )
+        st.info(f"PaperBanana status · {_td_dtype.title()}: {_td_status}{_td_iter_suffix}")
+
         if _td_intermediate:
             st.caption(f"{_td_dtype.title()} · intermediate outputs")
             _td_cols = st.columns(min(3, len(_td_intermediate)))
@@ -1220,18 +1287,39 @@ def show_text_to_diagrams() -> None:
 
             if _mmd_svg_b:
                 _mmd_svg_str = _mmd_svg_b.decode() if isinstance(_mmd_svg_b, bytes) else _mmd_svg_b
-                # Extract SVG height for iframe sizing
-                _svg_h_match = _td_re3.search(r'height=["\']([0-9.]+)["\']', _mmd_svg_str)
-                _svg_h_pt = float(_svg_h_match.group(1)) if _svg_h_match else 400
-                _iframe_h = max(300, int(_svg_h_pt) + 60)
-                # Display SVG inside a themed HTML frame
+                # Robust SVG height detection (height attr or viewBox fallback)
+                _svg_h = None
+                _svg_h_match = _td_re3.search(r'height=["\']([0-9.]+)(?:px|pt|%)?["\']', _mmd_svg_str)
+                if _svg_h_match:
+                    try:
+                        _svg_h = float(_svg_h_match.group(1))
+                    except Exception:
+                        _svg_h = None
+                if _svg_h is None:
+                    _vb_match = _td_re3.search(
+                        r'viewBox=["\']\s*[0-9.\-]+\s+[0-9.\-]+\s+([0-9.\-]+)\s+([0-9.\-]+)\s*["\']',
+                        _mmd_svg_str,
+                    )
+                    if _vb_match:
+                        try:
+                            _svg_h = float(_vb_match.group(2))
+                        except Exception:
+                            _svg_h = None
+
+                _svg_h = _svg_h or 640.0
+                _iframe_h = max(420, min(1400, int(_svg_h) + 80))
+
+                # Display SVG inside a stable framed HTML viewer
                 _mmd_html_disp = (
                     "<!DOCTYPE html><html><head>"
-                    "<style>html,body{margin:0;padding:0;background:transparent;overflow:auto}"
-                    "div.wrap{padding:16px 8px;display:flex;justify-content:center}"
-                    "svg{max-width:100%;height:auto}"
+                    "<style>"
+                    "html,body{margin:0;padding:0;background:#0d1117;overflow:auto;}"
+                    "div.wrap{padding:14px 10px;display:flex;justify-content:center;}"
+                    "div.frame{background:#ffffff;border-radius:10px;padding:10px;max-width:100%;}"
+                    "svg{display:block;max-width:100%;height:auto;}"
+                    "</style>"
                     "</style></head><body>"
-                    f'<div class="wrap">{_mmd_svg_str}</div>'
+                    f'<div class="wrap"><div class="frame">{_mmd_svg_str}</div></div>'
                     "</body></html>"
                 )
                 st.components.v1.html(_mmd_html_disp, height=_iframe_h, scrolling=True)
@@ -1372,6 +1460,9 @@ def show_server_management() -> None:
 # ── Page: Configuration ───────────────────────────────────────────────────────
 
 def show_configuration() -> None:
+    if st.session_state.get("nav_page") != "config":
+        return
+
     st.markdown('<div class="hero"><p class="hero-title">Configuration</p><p class="hero-sub">Settings persist for the current session. For persistence across restarts, put your API keys in <code>~/.researchanalyser/.env</code> (e.g. <code>GOOGLE_API_KEY=…</code>).</p></div>', unsafe_allow_html=True)
 
     col_a, col_b = st.columns(2, gap="medium")
@@ -1677,12 +1768,12 @@ if _sb_rs and not _sb_rs.get("done"):
 _page = st.session_state["nav_page"]
 if _page == "server":
     show_server_management()
-    st.stop()
-if _page == "config":
+elif _page == "config":
     show_configuration()
-    st.stop()
-if _page == "diagrams":
+elif _page == "diagrams":
     show_text_to_diagrams()
+
+if _page != "analyse":
     st.stop()
 
 # ── Page: Analyse Paper ───────────────────────────────────────────────────────
@@ -1871,6 +1962,7 @@ if run_clicked:
             "generate_diagrams": generate_diagrams,
             "generate_review":  generate_review,
             "diagram_types":    list(diagram_types),
+            "max_iterations":   int(config.diagrams.max_iterations),
         }
 
         def _analysis_worker(
@@ -2115,6 +2207,11 @@ if _bg is not None:
                         _pi_col_idx += 1
                         _dg_prog = _bg.get("diagram_progress", {})
                         _dg_types = _bg_meta.get("diagram_types", [])
+                        _intermediate = _collect_pb_intermediate_images(
+                            _bg_meta.get("output_dir", _DEFAULT_OUTPUT),
+                            _dg_types,
+                        )
+                        _max_iters = max(1, int(_bg_meta.get("max_iterations", _cfg("max_iterations", 3))))
                         _rows = ""
                         for _dtype, _dstatus in _dg_prog.items():
                             if "✓" in _dstatus:
@@ -2125,10 +2222,17 @@ if _bg is not None:
                                 _sc = "#58a6ff"
                             else:
                                 _sc = "#8b949e"
+
+                            _iter_suffix = ""
+                            _iter_done = len(_intermediate.get(_dtype, []))
+                            if _iter_done > 0 and "✓" not in _dstatus and "✗" not in _dstatus:
+                                _iter_live = min(_iter_done, _max_iters)
+                                _iter_suffix = f" · Iteration {_iter_live}/{_max_iters}"
+
                             _rows += (
                                 f'<div style="display:flex;align-items:center;gap:8px;'
                                 f'margin:5px 0;font-size:13px">'
-                                f'<span style="color:{_sc}">{_dstatus}</span>'
+                                f'<span style="color:{_sc}">{_dstatus}{_iter_suffix}</span>'
                                 f'<span style="color:#c9d1d9">{_dtype.title()}</span>'
                                 f'</div>'
                             )
@@ -2142,10 +2246,6 @@ if _bg is not None:
                             unsafe_allow_html=True,
                         )
 
-                        _intermediate = _collect_pb_intermediate_images(
-                            _bg_meta.get("output_dir", _DEFAULT_OUTPUT),
-                            _dg_types,
-                        )
                         for _dtype in _dg_types:
                             _imgs = _intermediate.get(_dtype, [])
                             if not _imgs:
@@ -2187,6 +2287,57 @@ if _bg is not None:
 # ── Results ────────────────────────────────────────────────────────────────────
 report = st.session_state.get("last_report")
 output_dir = st.session_state.get("last_output_dir", _cfg("output_dir", _DEFAULT_OUTPUT))
+
+
+def _find_latest_saved_output_dir(preferred_dir: str | Path) -> Path | None:
+    """Find the most recent directory containing report.md.
+
+    Preference order:
+    1) preferred_dir/report.md
+    2) newest report.md under the configured output root
+    """
+    _pref = Path(preferred_dir)
+    _pref_report = _pref / "report.md"
+    if _pref_report.exists():
+        return _pref
+
+    _root = Path(_cfg("output_dir", _DEFAULT_OUTPUT))
+    if not _root.exists():
+        return None
+
+    _reports = list(_root.rglob("report.md"))
+    if not _reports:
+        return None
+    _latest = max(_reports, key=lambda p: p.stat().st_mtime)
+    return _latest.parent
+
+
+_saved_report_md_text = ""
+if report is None:
+    _restore_bar_c1, _restore_bar_c2 = st.columns([1.2, 3.8])
+    with _restore_bar_c1:
+        if st.button("↺ Restore latest run", key="_restore_latest_run", use_container_width=True):
+            _restored = _find_latest_saved_output_dir(output_dir)
+            if _restored is None:
+                st.warning("No saved analysis run found in output directory yet.")
+            else:
+                st.session_state["last_output_dir"] = str(_restored)
+                st.session_state.pop("last_report", None)
+                st.rerun()
+    with _restore_bar_c2:
+        st.caption("Reload the newest saved analysis results from disk if in-memory state was cleared.")
+
+    _effective_output_dir = _find_latest_saved_output_dir(output_dir)
+    if _effective_output_dir is not None:
+        output_dir = str(_effective_output_dir)
+        st.session_state["last_output_dir"] = output_dir
+
+    _saved_report_md = Path(output_dir) / "report.md"
+    if _saved_report_md.exists():
+        try:
+            _saved_report_md_text = _saved_report_md.read_text(encoding="utf-8")
+        except Exception:
+            _saved_report_md_text = ""
 
 if report:
     # ── Inline file viewer (full-page, replaces results tabs) ─────────────────
@@ -2516,28 +2667,48 @@ if report:
                     "Check the app logs for details."
                 )
 
-    # ── STORM tab ─────────────────────────────────────────────────────────────
-    if _gen_storm and tab_idx < len(tabs):
-        with tabs[tab_idx]:
-            tab_idx += 1
-            if report.storm_report:
-                st.markdown(report.storm_report)
-                _dl_button(
-                    "⬇  Download STORM Report (Markdown)",
-                    report.storm_report,
-                    file_name="storm_report.md",
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                )
-            else:
-                st.warning(
-                    "STORM report was not generated. Common causes:\n"
-                    "- **OpenAI API Key** not set in Configuration\n"
-                    "- `knowledge-storm` or `dspy-ai` package missing\n\n"
-                    "Install with: `pip install knowledge-storm`\n\n"
-                    "Check the app logs for details."
-                )
+if report is None and _saved_report_md_text:
+    st.markdown('<p class="sec-label">Results</p>', unsafe_allow_html=True)
+    st.info("Showing saved report from disk. Run another analysis to repopulate interactive cards.")
+    with st.container(border=True):
+        st.markdown(_saved_report_md_text)
 
+    _saved_report_md = Path(output_dir) / "report.md"
+    _saved_report_html = Path(output_dir) / "report.html"
+    _saved_review_md = Path(output_dir) / "review.md"
+
+    st.markdown('<p class="sec-label">Downloads</p>', unsafe_allow_html=True)
+    _saved_cols = st.columns(3)
+    if _saved_report_md.exists():
+        with _saved_cols[0]:
+            _dl_button(
+                "⬇  Download report.md",
+                _saved_report_md.read_text(encoding="utf-8"),
+                file_name="analysis_report.md",
+                mime="application/octet-stream",
+                use_container_width=True,
+                key="_saved_report_md_dl",
+            )
+    if _saved_report_html.exists():
+        with _saved_cols[1]:
+            _dl_button(
+                "⬇  Download report.html",
+                _saved_report_html.read_text(encoding="utf-8"),
+                file_name="analysis_report.html",
+                mime="application/octet-stream",
+                use_container_width=True,
+                key="_saved_report_html_dl",
+            )
+    if _saved_review_md.exists():
+        with _saved_cols[2]:
+            _dl_button(
+                "⬇  Download review.md",
+                _saved_review_md.read_text(encoding="utf-8"),
+                file_name="review.md",
+                mime="application/octet-stream",
+                use_container_width=True,
+                key="_saved_review_md_dl",
+            )
 
 # ── PaperReview.ai Comparison ─────────────────────────────────────────────────
 st.divider()

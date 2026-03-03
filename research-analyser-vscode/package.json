@@ -1,0 +1,328 @@
+{
+  "name": "research-analyser",
+  "displayName": "Research Analyser",
+  "description": "Surfaces Research Analyser output — equations, methodology, peer-review scores — directly in the editor.",
+  "version": "0.6.0",
+  "publisher": "kp-algomaster",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kp-algomaster/Research_Analyser.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "icon": "resources/icon.png",
+  "categories": ["Other"],
+  "keywords": ["research", "papers", "equations", "latex", "arxiv"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": [
+      {
+        "title": "Server",
+        "properties": {
+          "researchAnalyser.apiUrl": {
+            "type": "string",
+            "default": "http://localhost:8000",
+            "description": "Base URL for the Research Analyser FastAPI backend."
+          },
+          "researchAnalyser.autoLoadLatestReport": {
+            "type": "boolean",
+            "default": true,
+            "description": "Automatically load the latest report from the API on activation."
+          },
+          "researchAnalyser.reportSearchPaths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["~/ResearchAnalyserOutput", "./output"],
+            "description": "Directories to search for analysis_report.json files."
+          }
+        }
+      },
+      {
+        "title": "API Keys",
+        "properties": {
+          "researchAnalyser.keys.openai": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "**OpenAI API Key** — used by the agentic reviewer and STORM report generator. Get yours at [platform.openai.com](https://platform.openai.com/api-keys). Stored in VS Code settings; use _Save API Keys → .env_ to write to your workspace `.env`."
+          },
+          "researchAnalyser.keys.google": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "**Google / Gemini API Key** — used by PaperBanana diagram generation (`gemini-2.0-flash`). Get yours at [aistudio.google.com](https://aistudio.google.com/app/apikey)."
+          },
+          "researchAnalyser.keys.tavily": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "**Tavily API Key** — enhances related-work search in the agentic reviewer. Get yours at [tavily.com](https://app.tavily.com)."
+          },
+          "researchAnalyser.keys.semanticScholar": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "**Semantic Scholar API Key** — raises rate limits when fetching paper metadata. Get yours at [semanticscholar.org](https://www.semanticscholar.org/product/api)."
+          },
+          "researchAnalyser.keys.huggingface": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "**HuggingFace Token** — required to download MonkeyOCR and Qwen3-TTS models. Get yours at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)."
+          }
+        }
+      },
+      {
+        "title": "Editor",
+        "properties": {
+          "researchAnalyser.hoverEnabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show LaTeX equation hover cards over known symbols."
+          },
+          "researchAnalyser.hoverLanguages": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": ["python", "typescript", "javascript", "cpp", "rust"],
+            "description": "Languages for which equation hover is active."
+          },
+          "researchAnalyser.inlineDecorationsEnabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show inline KaTeX decorations in spec.md equation block headers."
+          },
+          "researchAnalyser.katexFontSize": {
+            "type": "string",
+            "default": "1em",
+            "description": "Font size for KaTeX rendered equations."
+          },
+          "researchAnalyser.specFileGlob": {
+            "type": "string",
+            "default": "**/{spec,*_spec}.md",
+            "description": "Glob pattern for files handled by the spec.md renderer."
+          },
+          "researchAnalyser.insertFormat": {
+            "type": "string",
+            "enum": ["comment", "docstring", "raw"],
+            "default": "comment",
+            "description": "Default format for inserting equations into code."
+          },
+          "researchAnalyser.diagramEngine": {
+            "type": "string",
+            "enum": ["paperbanana", "beautiful_mermaid"],
+            "default": "paperbanana",
+            "markdownDescription": "**Diagram engine** to use when analysing papers.\n- `paperbanana` — AI-powered diagrams via Gemini (requires `GOOGLE_API_KEY`)\n- `beautiful_mermaid` — local Mermaid rendering (no API key needed)"
+          }
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "researchAnalyser.analyse",
+        "title": "Research Analyser: Analyse Paper",
+        "icon": "$(search)"
+      },
+      {
+        "command": "researchAnalyser.saveApiKeys",
+        "title": "Research Analyser: Save API Keys → .env"
+      },
+      {
+        "command": "researchAnalyser.openSettings",
+        "title": "Research Analyser: Open Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "researchAnalyser.loadReport",
+        "title": "Research Analyser: Load Report JSON"
+      },
+      {
+        "command": "researchAnalyser.openPanel",
+        "title": "Research Analyser: Open Report Panel"
+      },
+      {
+        "command": "researchAnalyser.pickEquation",
+        "title": "Research Analyser: Insert Equation"
+      },
+      {
+        "command": "researchAnalyser.clearReport",
+        "title": "Research Analyser: Clear Loaded Report",
+        "icon": "$(clear-all)",
+        "enablement": "researchAnalyser.reportLoaded"
+      },
+      {
+        "command": "researchAnalyser.copyEquation",
+        "title": "Research Analyser: Copy Equation (LaTeX)"
+      },
+      {
+        "command": "researchAnalyser.markImplements",
+        "title": "Research Analyser: Mark as Implements §…"
+      },
+      {
+        "command": "researchAnalyser.fetchPaper",
+        "title": "Research Analyser: Fetch Paper (arXiv / URL / DOI)",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "researchAnalyser.downloadMonkeyOcr",
+        "title": "Research Analyser: Download MonkeyOCR Offline",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "researchAnalyser.startServer",
+        "title": "Research Analyser: Start Backend Server",
+        "icon": "$(server)"
+      },
+      {
+        "command": "researchAnalyser.textToDiagrams",
+        "title": "Research Analyser: Text → Diagrams",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "researchAnalyser.generateReview",
+        "title": "Research Analyser: Generate Peer Review",
+        "icon": "$(comment-discussion)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "researchAnalyser.analyse",
+        "key": "ctrl+shift+r",
+        "mac": "shift+cmd+r"
+      },
+      {
+        "command": "researchAnalyser.openPanel",
+        "key": "ctrl+shift+e",
+        "mac": "shift+cmd+e"
+      },
+      {
+        "command": "researchAnalyser.pickEquation",
+        "key": "ctrl+shift+q",
+        "mac": "shift+cmd+q",
+        "when": "editorIsOpen"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "researchAnalyser.pickEquation",
+          "group": "researchAnalyser@1",
+          "when": "editorIsOpen && researchAnalyser.reportLoaded"
+        },
+        {
+          "command": "researchAnalyser.markImplements",
+          "group": "researchAnalyser@2",
+          "when": "editorIsOpen && researchAnalyser.reportLoaded"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "researchAnalyser.copyEquation",
+          "when": "viewItem == equation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "researchAnalyser.analyse",
+          "when": "view == researchAnalyser.sidebar",
+          "group": "navigation@1"
+        },
+        {
+          "command": "researchAnalyser.textToDiagrams",
+          "when": "view == researchAnalyser.sidebar",
+          "group": "navigation@2"
+        },
+        {
+          "command": "researchAnalyser.clearReport",
+          "when": "view == researchAnalyser.sidebar && researchAnalyser.reportLoaded",
+          "group": "navigation@3"
+        },
+        {
+          "command": "researchAnalyser.startServer",
+          "when": "view == researchAnalyser.sidebar",
+          "group": "overflow@1"
+        },
+        {
+          "command": "researchAnalyser.downloadMonkeyOcr",
+          "when": "view == researchAnalyser.sidebar",
+          "group": "overflow@2"
+        },
+        {
+          "command": "researchAnalyser.openSettings",
+          "when": "view == researchAnalyser.sidebar",
+          "group": "overflow@3"
+        },
+        {
+          "command": "researchAnalyser.fetchPaper",
+          "when": "view == researchAnalyser.sidebar",
+          "group": "overflow@4"
+        },
+        {
+          "command": "researchAnalyser.generateReview",
+          "when": "view == researchAnalyser.sidebar",
+          "group": "overflow@5"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "researchAnalyser",
+          "title": "Research Analyser",
+          "icon": "resources/activity-bar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "researchAnalyser": [
+        {
+          "id": "researchAnalyser.sidebar",
+          "name": "Research Context",
+          "when": "true"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "researchAnalyser.sidebar",
+        "contents": "📄 **Analyse a Paper**\nFetch and analyse from arXiv, DOI, URL, or local PDF.\n[$(search) Analyse Paper](command:researchAnalyser.analyse)\n[$(cloud-download) Fetch Paper (arXiv / URL)](command:researchAnalyser.fetchPaper)\n\n🎨 **Generate Diagrams**\nCreate publication-quality methodology, architecture, and results diagrams from text.\n[$(type-hierarchy) Text → Diagrams](command:researchAnalyser.textToDiagrams)\n\n📋 **Review & Report**\nGenerate agentic peer review with Stanford scoring.\n[$(comment-discussion) Generate Peer Review](command:researchAnalyser.generateReview)\n[$(folder-opened) Load Existing Report](command:researchAnalyser.loadReport)\n\n⚙️ **Setup**\n[$(server) Start Backend Server](command:researchAnalyser.startServer)\n[$(desktop-download) Download MonkeyOCR Offline](command:researchAnalyser.downloadMonkeyOcr)\n[$(gear) Open Settings & API Keys](command:researchAnalyser.openSettings)",
+        "when": "!researchAnalyser.reportLoaded"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "researchAnalyser.specRenderer",
+        "displayName": "Spec Renderer (KaTeX)",
+        "selector": [
+          { "filenamePattern": "**/spec.md" },
+          { "filenamePattern": "**/*_spec.md" }
+        ],
+        "priority": "option"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.config.js",
+    "watch": "node esbuild.config.js --watch",
+    "lint": "eslint src --ext .ts",
+    "test": "node ./out/tests/runTests.js",
+    "package": "vsce package",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/katex": "^0.16.7",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "20.x",
+    "@types/sinon": "^17.0.3",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vscode/test-electron": "^2.3.9",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.21.0",
+    "eslint": "^8.57.0",
+    "mocha": "^10.3.0",
+    "sinon": "^17.0.1",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "katex": "^0.16.10"
+  }
+}
