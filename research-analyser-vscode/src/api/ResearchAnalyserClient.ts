@@ -118,7 +118,10 @@ export class ResearchAnalyserClient implements IResearchAnalyserClient {
         { method: "GET" },
         2000
       );
-      return resp.ok;
+      if (!resp.ok) { return false; }
+      // Verify this is the Research Analyser server, not another service on the same port.
+      const body = await resp.json().catch(() => null) as { status?: string } | null;
+      return body?.status === "ok";
     } catch {
       return false;
     }

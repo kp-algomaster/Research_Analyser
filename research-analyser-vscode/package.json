@@ -2,7 +2,7 @@
   "name": "research-analyser",
   "displayName": "Research Analyser",
   "description": "Surfaces Research Analyser output — equations, methodology, peer-review scores — directly in the editor.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "kp-algomaster",
   "license": "MIT",
   "repository": {

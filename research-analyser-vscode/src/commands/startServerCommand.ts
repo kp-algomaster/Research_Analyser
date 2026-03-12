@@ -1,71 +1,113 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import { ResearchAnalyserClient } from "../api/ResearchAnalyserClient";
+
+/**
+ * Persistent venv directory — shared with the macOS launcher.
+ * Created once; reused on every subsequent "Start Server" invocation.
+ */
+const RA_VENV_DIR = path.join(os.homedir(), ".researchanalyser", "venv");
 
 /**
  * Start the Research Analyser FastAPI backend server.
  *
- * Discovers the project's Python venv and uses its uvicorn directly,
- * avoiding PATH issues when VS Code tasks can't find the command.
+ * First invocation (no venv found):
+ *   1. Finds system Python 3 via login-shell PATH (Homebrew, pyenv, etc.)
+ *   2. Creates ~/.researchanalyser/venv
+ *   3. pip-installs all requirements from the workspace requirements.txt
+ *   4. Starts uvicorn — terminal stays open so the user can monitor progress
+ *
+ * Subsequent invocations (venv already exists):
+ *   Runs uvicorn directly from the existing venv — no reinstall.
  */
 export async function startServerCommand(client: ResearchAnalyserClient): Promise<void> {
-  // Quick health check — maybe it's already running
+  // Already running?
   const alive = await client.health();
   if (alive) {
     vscode.window.showInformationMessage("Research Analyser server is already running.");
     return;
   }
 
-  // Resolve the project root (workspace folder or parent of extension)
   const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const projectRoot = wsFolder ?? "";
 
-  // Try to find Python / uvicorn inside the venv
+  // --- Locate an existing venv that already has uvicorn installed ---
   const venvCandidates = [
-    path.join(projectRoot, ".venv312", "bin", "uvicorn"),
-    path.join(projectRoot, ".venv", "bin", "uvicorn"),
-    path.join(projectRoot, "venv", "bin", "uvicorn"),
+    RA_VENV_DIR,
+    path.join(projectRoot, ".venv312"),
+    path.join(projectRoot, ".venv"),
+    path.join(projectRoot, "venv"),
   ];
 
-  let uvicornPath = "uvicorn"; // fallback
-  for (const candidate of venvCandidates) {
-    if (fs.existsSync(candidate)) {
-      uvicornPath = candidate;
+  let uvicornBin: string | undefined;
+  for (const v of venvCandidates) {
+    const u = path.join(v, "bin", "uvicorn");
+    if (fs.existsSync(u)) {
+      uvicornBin = u;
       break;
     }
   }
 
-  // Also try python -m uvicorn as last resort
-  const pythonCandidates = [
-    path.join(projectRoot, ".venv312", "bin", "python"),
-    path.join(projectRoot, ".venv", "bin", "python"),
-    path.join(projectRoot, "venv", "bin", "python"),
-  ];
+  const isFirstTime = !uvicornBin;
+  let shellCmd: string;
 
-  let useModule = false;
-  let pythonPath = "python3";
-  if (uvicornPath === "uvicorn") {
-    // Could not find uvicorn binary directly — use python -m uvicorn
-    for (const candidate of pythonCandidates) {
-      if (fs.existsSync(candidate)) {
-        pythonPath = candidate;
-        useModule = true;
-        break;
-      }
-    }
+  if (!isFirstTime) {
+    // --- Subsequent run: start the server directly ---
+    shellCmd = `"${uvicornBin}" research_analyser.api:app --host 0.0.0.0 --port 8000`;
+  } else {
+    // --- First-time setup: create venv → install deps → start server ---
+    const venvDir = RA_VENV_DIR;
+    const pipBin = path.join(venvDir, "bin", "pip");
+    const uvicornNew = path.join(venvDir, "bin", "uvicorn");
+    const reqFile = path.join(projectRoot, "requirements.txt");
+    const reqArg = fs.existsSync(reqFile) ? reqFile : "";
+
+    const installCmd = reqArg
+      ? `"${pipBin}" install -r "${reqArg}"`
+      : `"${pipBin}" install fastapi "uvicorn[standard]" sse-starlette python-dotenv pydantic python-multipart httpx aiohttp aiofiles PyMuPDF rich click tqdm Pillow soundfile`;
+
+    // Steps are newline-separated; set -e makes the script fail-fast on any error.
+    // The task shell is forced to zsh -l so Homebrew/pyenv/conda are on PATH.
+    shellCmd = [
+      "set -e",
+      `echo "╔══════════════════════════════════════════════════════╗"`,
+      `echo "║  Research Analyser — First-time environment setup    ║"`,
+      `echo "╚══════════════════════════════════════════════════════╝"`,
+      // Discover Python 3.10+; login shell means Homebrew is already in PATH
+      `PYTHON=$(command -v python3.12 2>/dev/null || command -v python3.11 2>/dev/null || command -v python3.10 2>/dev/null || command -v python3 2>/dev/null)`,
+      `[ -z "$PYTHON" ] && echo "ERROR: Python 3.10+ not found. Install via Homebrew: brew install python@3.12" && exit 1`,
+      `echo "Using Python: $PYTHON ($($PYTHON --version))"`,
+      `echo ""`,
+      `echo "--- Creating virtual environment at ${venvDir} ---"`,
+      `"$PYTHON" -m venv "${venvDir}"`,
+      `"${pipBin}" install --quiet --upgrade pip`,
+      `echo ""`,
+      `echo "--- Installing packages (this may take 5–15 minutes on first run) ---"`,
+      installCmd,
+      `echo ""`,
+      `echo "=== Setup complete. Starting server… ==="`,
+      `echo ""`,
+      `"${uvicornNew}" research_analyser.api:app --host 0.0.0.0 --port 8000`,
+    ].join("\n");
   }
 
-  const cmd = useModule
-    ? `${pythonPath} -m uvicorn research_analyser.api:app --host 0.0.0.0 --port 8000`
-    : `${uvicornPath} research_analyser.api:app --host 0.0.0.0 --port 8000`;
+  const taskLabel = isFirstTime
+    ? "Research Analyser — First-time Setup"
+    : "Research Analyser";
 
+  // ShellExecution with zsh -l ensures Homebrew / pyenv are on PATH
   const task = new vscode.Task(
     { type: "shell" },
     vscode.TaskScope.Workspace,
-    "Research Analyser",
+    taskLabel,
     "research-analyser",
-    new vscode.ShellExecution(cmd, { cwd: projectRoot })
+    new vscode.ShellExecution(shellCmd, {
+      cwd: projectRoot,
+      executable: "/bin/zsh",
+      shellArgs: ["-l", "-c"],
+    })
   );
   task.isBackground = true;
   task.presentationOptions = {
@@ -73,15 +115,28 @@ export async function startServerCommand(client: ResearchAnalyserClient): Promis
     panel: vscode.TaskPanelKind.Dedicated,
   };
 
+  if (isFirstTime) {
+    vscode.window.showInformationMessage(
+      "Research Analyser: First-time setup started. " +
+        "Watch the terminal — this may take 5–15 minutes while packages are installed."
+    );
+  }
+
   await vscode.tasks.executeTask(task);
 
-  // Wait for server to come up (poll every second, up to 15 s)
+  // Poll for server readiness.
+  // Allow up to 10 minutes on first run (pip installs torch, langgraph, etc.)
+  const maxWaitSecs = isFirstTime ? 600 : 30;
+  const progressTitle = isFirstTime
+    ? "Research Analyser: Installing packages & starting server…"
+    : "Research Analyser: Starting server…";
+
   vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: "Starting server…" },
-    async (progress) => {
-      for (let i = 0; i < 15; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        progress.report({ message: `Waiting… (${i + 1}s)` });
+    { location: vscode.ProgressLocation.Notification, title: progressTitle },
+    async (progress: vscode.Progress<{ message?: string }>) => {
+      for (let i = 0; i < maxWaitSecs; i++) {
+        await new Promise<void>((r) => setTimeout(r, 1000));
+        progress.report({ message: `(${i + 1}s) — check the terminal for progress` });
         const ok = await client.health();
         if (ok) {
           vscode.commands.executeCommand("setContext", "researchAnalyser.serverRunning", true);
@@ -90,7 +145,7 @@ export async function startServerCommand(client: ResearchAnalyserClient): Promis
         }
       }
       vscode.window.showWarningMessage(
-        "Server may still be starting. Check the terminal output."
+        "Server did not respond in time. Check the terminal output for errors."
       );
     }
   );

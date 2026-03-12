@@ -1,5 +1,5 @@
 # VS Code Extension — Research Analyser Integration
-**Spec version:** 1.0
+**Spec version:** 1.1
 **Status:** Draft
 **Depends on:** Research Analyser API (`research_analyser/api.py`), analysis output format (`AnalysisReport`)
 
@@ -226,8 +226,35 @@ User: ⇧⌘R → "Research Analyser: Analyse Paper"
 
 If the Research Analyser API is not running:
 - Extension shows: "Research Analyser server not running. Start it?"
-- On confirm: spawns `uvicorn research_analyser.api:app` as a VS Code task
+- On confirm: runs `researchAnalyser.startServer` (see §6.1 below)
 - Retries the API call after 5 seconds
+
+### 6.1 Start Server — Environment Bootstrap
+
+`researchAnalyser.startServer` handles first-time setup automatically:
+
+**First invocation (no venv found):**
+1. Searches for an existing Python venv at these locations (in order):
+   - `~/.researchanalyser/venv` — persistent, shared with the macOS launcher
+   - `<workspace>/.venv312/bin/uvicorn`
+   - `<workspace>/.venv/bin/uvicorn`
+   - `<workspace>/venv/bin/uvicorn`
+2. If none found, creates `~/.researchanalyser/venv`:
+   - Discovers Python 3.10+ via login-shell PATH (`command -v python3.12 …`)
+   - `python -m venv ~/.researchanalyser/venv`
+   - `pip install --upgrade pip`
+   - `pip install -r <workspace>/requirements.txt` (falls back to core server packages if no `requirements.txt`)
+3. Starts `uvicorn research_analyser.api:app --host 0.0.0.0 --port 8000`
+4. Shows a terminal task (`Research Analyser — First-time Setup`) so the user can monitor progress
+5. Polls for `/health` readiness for up to **10 minutes** (package installs can take time)
+
+**Subsequent invocations:**
+- Detects existing venv via `uvicorn` binary presence — no reinstall
+- Starts server immediately; polls for up to **30 seconds**
+
+**Shell execution:** All commands run via `zsh -l -c` (login shell) so Homebrew, pyenv, and conda are on PATH without any manual configuration.
+
+**Venv reuse:** The `~/.researchanalyser/venv` directory persists across workspace changes and VS Code restarts. Delete it to force a clean reinstall.
 
 ---
 
@@ -374,6 +401,8 @@ research-analyser-vscode/
 | AC-8 | Coverage sidebar correctly counts `@implements` annotations and shows uncovered sections |
 | AC-9 | All KaTeX rendering works fully offline (no CDN requests) |
 | AC-10 | Extension activates in < 300 ms on startup (lazy-loads heavy providers) |
+| AC-11 | First "Start Server" creates `~/.researchanalyser/venv`, installs all requirements, and starts uvicorn — no manual pip commands required |
+| AC-12 | Subsequent "Start Server" reuses the existing venv without reinstalling packages |
 
 ---
 
@@ -397,5 +426,7 @@ research-analyser-vscode/
 - [ ] Coverage sidebar with uncovered sections highlighted
 - [ ] `markImplementsCommand` with section QuickPick
 - [ ] Settings page (`researchAnalyser.*` workspace config)
-- [ ] Auto-start API server if not running
+- [x] Auto-start API server if not running
+- [x] First-time environment bootstrap: venv creation + `pip install -r requirements.txt`
+- [x] Persistent venv at `~/.researchanalyser/venv` (reused on subsequent starts)
 - [ ] Publish to VS Code Marketplace + Open VSX
