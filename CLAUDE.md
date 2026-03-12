@@ -45,6 +45,19 @@ git remote set-url origin https://github.com/kp-algomaster/Research_Analyser.git
 ```
 Never commit `.env` or embed the PAT value directly in any file or command output.
 
+## VS Code Extension — Publish to Marketplace
+The Azure Marketplace Personal Access Token is stored as `AZURE_MARKETPLACE_KEY` in `.env`.
+When publishing the VS Code extension, ALWAYS use this pattern:
+```bash
+AZURE_KEY=$(grep '^AZURE_MARKETPLACE_KEY=' .env | cut -d= -f2- | tr -d '"' | tr -d "'")
+cd research-analyser-vscode
+npx vsce publish -p "$AZURE_KEY"
+```
+- Bump `version` in `research-analyser-vscode/package.json` before publishing
+- Run `npm run build` (or let `vsce publish` trigger `vscode:prepublish`) before publishing
+- Never commit `.env` or embed the token value directly in any file or command output
+- Extension hub: https://marketplace.visualstudio.com/manage/publishers/kp-algomaster
+
 ## macOS Bundle Notes
 - Output dir in bundled .app → `~/ResearchAnalyserOutput/` (read-only bundle workaround)
 - Launcher logs → `~/ResearchAnalyserOutput/launcher.log`
