@@ -16,22 +16,21 @@ export async function analyseCommand(
     if (!src) { return; }
   }
 
-  // Health check
+  // Health check — auto-start if not running (no prompt)
   const alive = await client.health();
   if (!alive) {
-    const action = await vscode.window.showWarningMessage(
-      "Research Analyser server is not running. Start it?",
-      "Start Server",
-      "Cancel"
-    );
-    if (action !== "Start Server") { return; }
-
+    vscode.window.showInformationMessage("Research Analyser: Starting server…");
     await vscode.commands.executeCommand("researchAnalyser.startServer");
-    // Wait for server to come up
-    await new Promise((r) => setTimeout(r, 5000));
-    const retryAlive = await client.health();
-    if (!retryAlive) {
-      vscode.window.showErrorMessage("Server did not start. Please start it manually.");
+    // Give server up to 15 s to respond (pip check + uvicorn boot)
+    let ready = false;
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (await client.health()) { ready = true; break; }
+    }
+    if (!ready) {
+      vscode.window.showErrorMessage(
+        "Research Analyser server did not start in time. Check the terminal for errors."
+      );
       return;
     }
   }

@@ -55,6 +55,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showCollapseAll: true,
   });
 
+  // Auto-start server when the sidebar becomes visible (e.g. switching from Text→Diagrams to Analyse Paper)
+  treeView.onDidChangeVisibility(async (e) => {
+    if (!e.visible) { return; }
+    const isAlive = await client.health();
+    vscode.commands.executeCommand("setContext", "researchAnalyser.serverRunning", isAlive);
+    if (!isAlive) {
+      vscode.window.showInformationMessage("Research Analyser: Starting server in background…");
+      startServerCommand(client);
+    }
+  });
+
   // Hover provider — register for configured languages
   const hoverLanguages = config.get<string[]>("hoverLanguages", [
     "python", "typescript", "javascript", "cpp", "rust",

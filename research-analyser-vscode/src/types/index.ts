@@ -184,6 +184,7 @@ export interface AnalysisOptions {
   generate_storm_report: boolean;
   generate_audio: boolean;
   diagram_types: string[];
+  diagram_engine: string;
 }
 
 export interface ProgressEvent {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.3 — 2026-03-12
+
+### Added
+- **Auto-start server on sidebar open** — switching to the Research Analyser sidebar now automatically starts the backend server in the background if it is not already running, so it is ready before the user clicks Analyse.
+- **Auto-start on Analyse Paper** — clicking Analyse Paper no longer shows a "Start Server?" prompt; the server starts silently and analysis proceeds once the server is ready.
+
 ## 0.7.2 — 2026-03-12
 
 ### Fixed
