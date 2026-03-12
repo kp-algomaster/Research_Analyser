@@ -2,7 +2,7 @@
   "name": "research-analyser",
   "displayName": "Research Analyser",
   "description": "Surfaces Research Analyser output — equations, methodology, peer-review scores — directly in the editor.",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "publisher": "kp-algomaster",
   "license": "MIT",
   "repository": {
@@ -71,6 +71,21 @@
         }
       },
       {
+        "title": "Network",
+        "properties": {
+          "researchAnalyser.network.skipSslVerification": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "**Disable SSL certificate verification** for all HTTP requests (paper downloads, arXiv, etc.). Enable this on restricted networks where corporate proxies intercept HTTPS. ⚠️ Only use on trusted networks. Writes `SKIP_SSL_VERIFICATION=true` to `.env`."
+          },
+          "researchAnalyser.network.sslCertPath": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "**Custom CA certificate bundle** (PEM file). Add your organisation's root certificate so SSL verification passes through a corporate proxy. Example: `/etc/ssl/certs/ca-bundle.crt`. Writes `SSL_CERT_FILE=<path>` to `.env`."
+          }
+        }
+      },
+      {
         "title": "Editor",
         "properties": {
           "researchAnalyser.hoverEnabled": {
@@ -122,7 +137,7 @@
       },
       {
         "command": "researchAnalyser.saveApiKeys",
-        "title": "Research Analyser: Save API Keys → .env"
+        "title": "Research Analyser: Save API Keys & Network Settings → .env"
       },
       {
         "command": "researchAnalyser.openSettings",

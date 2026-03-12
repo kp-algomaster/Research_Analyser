@@ -126,9 +126,13 @@ class ResearchAnalyser:
 
         logger.info(f"Analysing paper: {source} (type: {detected_type.value})")
 
-        # 2. Resolve to local PDF
+        # 2. Resolve to local PDF — forward SSL/network warnings to progress stream
         _progress("⬇️  Fetching PDF…")
-        pdf_path = await self.input_handler.resolve(paper_input)
+        self.input_handler._on_warning = _progress
+        try:
+            pdf_path = await self.input_handler.resolve(paper_input)
+        finally:
+            self.input_handler._on_warning = None
         logger.info(f"Resolved to: {pdf_path}")
         _progress(f"✓  PDF ready — {pdf_path.name}")
 

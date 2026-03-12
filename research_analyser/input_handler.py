@@ -76,37 +76,63 @@ class InputHandler:
     def __init__(self, temp_dir: Optional[str] = None):
         self.temp_dir = Path(temp_dir) if temp_dir else Path(tempfile.mkdtemp())
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        # Optional per-request warning callback; set by callers (e.g. analyser)
+        self._on_warning = None
+
+    def _emit_warning(self, message: str) -> None:
+        """Log a warning and optionally forward it to the registered callback."""
+        logger.warning(message)
+        if self._on_warning is not None:
+            try:
+                self._on_warning(message)
+            except Exception:
+                pass
 
     @staticmethod
     def _skip_ssl_verification() -> bool:
         value = str(os.getenv("SKIP_SSL_VERIFICATION", "")).strip().lower()
         return value in {"1", "true", "yes", "on"}
 
+    @staticmethod
+    def _ssl_context():
+        """Return an SSL context or bool for aiohttp.
+
+        Resolution order:
+        1. SKIP_SSL_VERIFICATION → ssl=False (no verification)
+        2. SSL_CERT_FILE / REQUESTS_CA_BUNDLE → custom CA bundle
+        3. Default system CA store (ssl=True)
+        """
+        if InputHandler._skip_ssl_verification():
+            return False
+        cert_file = os.getenv("SSL_CERT_FILE") or os.getenv("REQUESTS_CA_BUNDLE")
+        if cert_file and Path(cert_file).exists():
+            ctx = ssl.create_default_context(cafile=cert_file)
+            return ctx
+        return True
+
     async def _session_get(self, session: aiohttp.ClientSession, url: str, **kwargs):
         """GET with optional SSL-verification fallback on certificate errors."""
         use_ssl = kwargs.pop("ssl", None)
         if use_ssl is None:
-            use_ssl = False if self._skip_ssl_verification() else True
+            use_ssl = self._ssl_context()
 
         try:
             return await session.get(url, ssl=use_ssl, **kwargs)
         except (aiohttp.ClientConnectorCertificateError, aiohttp.ClientSSLError) as exc:
             if use_ssl is False:
                 raise
-            logger.warning(
-                "SSL verification failed for %s; retrying with verification disabled: %s",
-                url,
-                exc,
+            self._emit_warning(
+                f"⚠️  SSL certificate error for {url} — retrying without verification. "
+                f"Set SSL_CERT_FILE or enable Skip SSL Verification in settings. ({exc})"
             )
             return await session.get(url, ssl=False, **kwargs)
         except aiohttp.ClientConnectorError as exc:
             cause = getattr(exc, "os_error", None)
             if use_ssl is False or not isinstance(cause, ssl.SSLCertVerificationError):
                 raise
-            logger.warning(
-                "Certificate chain rejected for %s; retrying with verification disabled: %s",
-                url,
-                cause,
+            self._emit_warning(
+                f"⚠️  SSL certificate chain rejected for {url} — retrying without verification. "
+                f"Add your CA certificate via SSL_CERT_FILE or enable Skip SSL Verification. ({cause})"
             )
             return await session.get(url, ssl=False, **kwargs)
 

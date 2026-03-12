@@ -42,38 +42,50 @@ export async function analyseCommand(
   vscode.commands.executeCommand("setContext", "researchAnalyser.serverRunning", true);
 
   const req = { source: src, options: { diagram_engine: diagramEngine } };
-  const cancelSource = new AbortController();
 
+  // ProgressLocation.Window keeps the spinner in the status bar so it never
+  // overlaps other panels (e.g. the Claude chat input box).
+  // A completion/error notification is shown separately when done.
   await vscode.window.withProgress(
     {
-      location: vscode.ProgressLocation.Notification,
+      location: vscode.ProgressLocation.Window,
       title: "Research Analyser",
-      cancellable: true,
+      cancellable: false,
     },
-    async (progress, token) => {
-      token.onCancellationRequested(() => cancelSource.abort());
-      progress.report({ message: "Starting analysis…", increment: 0 });
+    async (progress) => {
+      progress.report({ message: "Starting analysis…" });
 
       try {
         const report = await client.analyseStream(
           req,
           (evt) => {
-            progress.report({ message: evt.message, increment: evt.pct });
+            // message only — Window location has no progress bar
+            progress.report({ message: evt.message });
           },
-          cancelSource.signal
         );
 
         store.load(report, src!);
         const eq = report.extracted_content.equations.length;
         const score = report.review ? ` · score ${report.review.overall_score.toFixed(2)}` : "";
         vscode.window.showInformationMessage(
-          `Analysis complete — ${eq} equations${score}`
+          `Research Analyser: complete — ${eq} equations${score}`
         );
       } catch (e) {
-        if ((e as Error).name === "AbortError") {
-          vscode.window.showInformationMessage("Analysis cancelled.");
+        const msg = (e as Error).message ?? "";
+        const sslKeywords = ["SSL", "ssl", "certificate", "CERTIFICATE_VERIFY_FAILED"];
+        if (sslKeywords.some((kw) => msg.includes(kw))) {
+          const action = await vscode.window.showErrorMessage(
+            `Research Analyser: SSL error fetching paper. You may need to disable SSL verification or add a custom CA certificate.`,
+            "Open SSL Settings"
+          );
+          if (action === "Open SSL Settings") {
+            vscode.commands.executeCommand(
+              "workbench.action.openSettings",
+              "researchAnalyser.network"
+            );
+          }
         } else {
-          vscode.window.showErrorMessage(`Analysis failed: ${(e as Error).message}`);
+          vscode.window.showErrorMessage(`Research Analyser: analysis failed — ${msg}`);
         }
       }
     }

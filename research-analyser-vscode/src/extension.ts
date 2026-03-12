@@ -135,14 +135,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
     }),
     vscode.commands.registerCommand("researchAnalyser.saveApiKeys", async () => {
-      const cfg = vscode.workspace.getConfiguration("researchAnalyser.keys");
+      const keyCfg = vscode.workspace.getConfiguration("researchAnalyser.keys");
+      const netCfg = vscode.workspace.getConfiguration("researchAnalyser.network");
+
       const keyMap: Record<string, string> = {
-        OPENAI_API_KEY:           cfg.get<string>("openai", ""),
-        GOOGLE_API_KEY:           cfg.get<string>("google", ""),
-        TAVILY_API_KEY:           cfg.get<string>("tavily", ""),
-        SEMANTIC_SCHOLAR_API_KEY: cfg.get<string>("semanticScholar", ""),
-        HF_TOKEN:                 cfg.get<string>("huggingface", ""),
+        OPENAI_API_KEY:           keyCfg.get<string>("openai", ""),
+        GOOGLE_API_KEY:           keyCfg.get<string>("google", ""),
+        TAVILY_API_KEY:           keyCfg.get<string>("tavily", ""),
+        SEMANTIC_SCHOLAR_API_KEY: keyCfg.get<string>("semanticScholar", ""),
+        HF_TOKEN:                 keyCfg.get<string>("huggingface", ""),
       };
+
+      // Network settings
+      if (netCfg.get<boolean>("skipSslVerification", false)) {
+        keyMap["SKIP_SSL_VERIFICATION"] = "true";
+      }
+      const certPath = netCfg.get<string>("sslCertPath", "").trim();
+      if (certPath) {
+        keyMap["SSL_CERT_FILE"] = certPath;
+        keyMap["REQUESTS_CA_BUNDLE"] = certPath;
+      }
 
       // Find workspace root
       const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;

@@ -248,30 +248,82 @@ async def analyse_stream(req: VSCodeAnalyseRequest):
     async def generate() -> AsyncGenerator[dict, None]:
         global _last_report
         try:
-            # Emit initial progress
             yield {
                 "event": "progress",
                 "data": json.dumps({"pct": 5, "message": "Starting analysis…"}),
             }
 
-            # Run analysis (no streaming inside analyser yet — emit milestones)
-            yield {
-                "event": "progress",
-                "data": json.dumps({"pct": 10, "message": "Downloading / loading paper…"}),
-            }
+            # Queue bridges the sync on_progress callback → async SSE stream
+            queue: asyncio.Queue[str] = asyncio.Queue()
 
-            report = await analyser.analyse(req.source, options=options)
+            def _on_progress(message: str) -> None:
+                queue.put_nowait(message)
+
+            # Map known message prefixes to absolute progress percentages
+            _pct_steps = [
+                ("⬇️", 10), ("✓  PDF", 20), ("🔍", 25),
+                ("✓  Extracted", 50), ("🤖", 55),
+                ("🌪️", 85), ("🎙️", 90),
+            ]
+
+            def _resolve_pct(msg: str, current: int) -> int:
+                for prefix, pct in _pct_steps:
+                    if prefix in msg:
+                        return max(current, pct)
+                return current
+
+            current_pct = 5
+            task = asyncio.create_task(
+                analyser.analyse(req.source, options=options, on_progress=_on_progress)
+            )
+
+            # Drain progress messages while the analysis task is running
+            while not task.done():
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=0.4)
+                    current_pct = _resolve_pct(msg, current_pct)
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({"pct": current_pct, "message": msg}),
+                    }
+                except asyncio.TimeoutError:
+                    pass
+
+            # Drain any remaining messages buffered after task completion
+            while not queue.empty():
+                msg = queue.get_nowait()
+                current_pct = _resolve_pct(msg, current_pct)
+                yield {
+                    "event": "progress",
+                    "data": json.dumps({"pct": current_pct, "message": msg}),
+                }
+
+            # Re-raise any exception from the task
+            exc = task.exception()
+            if exc:
+                raise exc
+
+            report = task.result()
             _last_report = report.to_json()
 
             yield {
                 "event": "progress",
-                "data": json.dumps({"pct": 95, "message": "Finalising report…"}),
+                "data": json.dumps({"pct": 98, "message": "Finalising report…"}),
             }
-
             yield {"event": "complete", "data": json.dumps(_last_report, default=_json_default)}
         except Exception as exc:
             logger.error("SSE analysis failed: %s", exc)
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+            msg = str(exc)
+            ssl_keywords = ("SSL", "certificate", "CERTIFICATE_VERIFY_FAILED", "ssl")
+            if any(kw in msg for kw in ssl_keywords):
+                msg = (
+                    f"SSL error fetching paper: {msg}\n\n"
+                    "Fix: enable 'Skip SSL Verification' in VS Code settings "
+                    "(researchAnalyser.network.skipSslVerification) or set a custom "
+                    "CA certificate path (researchAnalyser.network.sslCertPath) and "
+                    "run 'Research Analyser: Save Network Settings → .env'."
+                )
+            yield {"event": "error", "data": json.dumps({"message": msg})}
 
     return EventSourceResponse(generate())
 
