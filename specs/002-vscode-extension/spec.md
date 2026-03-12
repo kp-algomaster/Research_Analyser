@@ -249,8 +249,9 @@ If the Research Analyser API is not running:
 5. Polls for `/health` readiness for up to **10 minutes** (package installs can take time)
 
 **Subsequent invocations:**
-- Detects existing venv via `uvicorn` binary presence — no reinstall
-- Starts server immediately; polls for up to **30 seconds**
+- Detects existing venv via `uvicorn` binary presence
+- Runs `pip install --quiet -r requirements.txt` (or core package list) to ensure all packages are present/up-to-date — safe no-op if everything is already installed, and fixes any missing packages added since the venv was created (e.g. `sse-starlette`)
+- Starts server; polls for up to **30 seconds**
 
 **Shell execution:** All commands run via `zsh -l -c` (login shell) so Homebrew, pyenv, and conda are on PATH without any manual configuration.
 
@@ -402,7 +403,7 @@ research-analyser-vscode/
 | AC-9 | All KaTeX rendering works fully offline (no CDN requests) |
 | AC-10 | Extension activates in < 300 ms on startup (lazy-loads heavy providers) |
 | AC-11 | First "Start Server" creates `~/.researchanalyser/venv`, installs all requirements, and starts uvicorn — no manual pip commands required |
-| AC-12 | Subsequent "Start Server" reuses the existing venv without reinstalling packages |
+| AC-12 | Subsequent "Start Server" reuses the existing venv and ensures all packages from `requirements.txt` are installed before starting uvicorn |
 
 ---
 

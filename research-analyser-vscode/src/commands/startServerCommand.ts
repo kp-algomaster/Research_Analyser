@@ -53,19 +53,34 @@ export async function startServerCommand(client: ResearchAnalyserClient): Promis
   const isFirstTime = !uvicornBin;
   let shellCmd: string;
 
+  const reqFile = path.join(projectRoot, "requirements.txt");
+  const reqArg = fs.existsSync(reqFile) ? reqFile : "";
+
   if (!isFirstTime) {
-    // --- Subsequent run: start the server directly ---
-    shellCmd = `"${uvicornBin}" research_analyser.api:app --host 0.0.0.0 --port 8000`;
+    // --- Subsequent run: ensure all packages present, then start server ---
+    // Derive pip from the same venv that owns uvicorn
+    const venvBinDir = path.dirname(uvicornBin!);
+    const pipBin = path.join(venvBinDir, "pip");
+
+    const ensureCmd = reqArg
+      ? `"${pipBin}" install --quiet -r "${reqFile}"`
+      : `"${pipBin}" install --quiet fastapi "uvicorn[standard]" sse-starlette python-dotenv pydantic python-multipart httpx aiohttp aiofiles PyMuPDF rich click tqdm Pillow soundfile`;
+
+    shellCmd = [
+      "set -e",
+      `echo "--- Checking / updating packages ---"`,
+      ensureCmd,
+      `echo "--- Starting server ---"`,
+      `"${uvicornBin}" research_analyser.api:app --host 0.0.0.0 --port 8000`,
+    ].join("\n");
   } else {
     // --- First-time setup: create venv → install deps → start server ---
     const venvDir = RA_VENV_DIR;
     const pipBin = path.join(venvDir, "bin", "pip");
     const uvicornNew = path.join(venvDir, "bin", "uvicorn");
-    const reqFile = path.join(projectRoot, "requirements.txt");
-    const reqArg = fs.existsSync(reqFile) ? reqFile : "";
 
     const installCmd = reqArg
-      ? `"${pipBin}" install -r "${reqArg}"`
+      ? `"${pipBin}" install -r "${reqFile}"`
       : `"${pipBin}" install fastapi "uvicorn[standard]" sse-starlette python-dotenv pydantic python-multipart httpx aiohttp aiofiles PyMuPDF rich click tqdm Pillow soundfile`;
 
     // Steps are newline-separated; set -e makes the script fail-fast on any error.

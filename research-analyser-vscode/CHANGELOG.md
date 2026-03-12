@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1 — 2026-03-12
+
+### Fixed
+- **Start Server on existing venv** — subsequent "Start Server" calls now run `pip install --quiet -r requirements.txt` before launching uvicorn, ensuring packages added after the venv was created (e.g. `sse-starlette`) are always present. This fixes the `501 Not Implemented` error on `/analyse/stream`.
+
+## 0.7.0 — 2026-03-12
+
 ## 0.6.0 — 2026-03-03
 
 ### Added
