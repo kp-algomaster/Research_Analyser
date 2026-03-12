@@ -70,21 +70,27 @@ export async function textToDiagramsCommand(client: ResearchAnalyserClient): Pro
     }
   }
 
-  // Call the API
+  // Call the API with SSE progress streaming
+  const cancelSource = new AbortController();
   await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
       title: "Generating diagram…",
-      cancellable: false,
+      cancellable: true,
     },
-    async (progress) => {
-      progress.report({ message: `Creating ${diagramType.label} diagram…` });
+    async (progress, token) => {
+      token.onCancellationRequested(() => cancelSource.abort());
+      progress.report({ message: `Creating ${(diagramType as { label: string; value: string }).label} diagram…`, increment: 0 });
 
       try {
-        const result = await client.generateDiagram(
+        const result = await client.generateDiagramStream(
           text!,
           (diagramType as { label: string; value: string }).value,
-          (engine as { label: string; value: string }).value
+          (engine as { label: string; value: string }).value,
+          (evt) => {
+            progress.report({ message: evt.message, increment: evt.pct });
+          },
+          cancelSource.signal
         );
 
         if (result.image_path || result.svg_path || result.png_path) {
@@ -127,7 +133,11 @@ export async function textToDiagramsCommand(client: ResearchAnalyserClient): Pro
           );
         }
       } catch (e) {
-        vscode.window.showErrorMessage(`Diagram generation failed: ${(e as Error).message}`);
+        if ((e as Error).name === "AbortError") {
+          vscode.window.showInformationMessage("Diagram generation cancelled.");
+        } else {
+          vscode.window.showErrorMessage(`Diagram generation failed: ${(e as Error).message}`);
+        }
       }
     }
   );

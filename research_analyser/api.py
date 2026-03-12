@@ -1226,3 +1226,182 @@ async def generate_diagram(req: DiagramRequest):
     except Exception as exc:
         logger.error("Diagram generation failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/diagrams/generate/stream")
+async def generate_diagram_stream(req: DiagramRequest):
+    """SSE-streaming version of /diagrams/generate.
+
+    Emits ``progress`` events with ``{pct, message}`` during generation so the
+    VS Code extension can update its progress notification in real time, then
+    emits a final ``complete`` event with the DiagramResponse payload.
+    """
+    if not _SSE_AVAILABLE:
+        raise HTTPException(
+            status_code=501,
+            detail="SSE streaming not available. Install sse-starlette: pip install sse-starlette",
+        )
+
+    from research_analyser.models import ExtractedContent, Section
+
+    content = ExtractedContent(
+        full_text=req.text,
+        title="User-provided text",
+        authors=[],
+        abstract=req.text[:500],
+        sections=[Section(title="Content", level=1, content=req.text)],
+        equations=[],
+        figures=[],
+        tables=[],
+        references=[],
+    )
+
+    async def _event_generator():
+        try:
+            if req.engine == "beautiful_mermaid":
+                # ── Beautiful Mermaid (local, synchronous steps) ─────────────
+                yield {
+                    "event": "progress",
+                    "data": json.dumps({"pct": 10, "message": "Generating Mermaid code…"}),
+                }
+                mermaid_code = _text_to_mermaid(req.text, req.diagram_type)
+
+                render_script = analyser._beautiful_mermaid_dir / "render.bundle.mjs"
+                if not render_script.exists():
+                    render_script = analyser._beautiful_mermaid_dir / "render.mjs"
+                if not render_script.exists():
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"message": f"Beautiful Mermaid render script not found in {analyser._beautiful_mermaid_dir}"}),
+                    }
+                    return
+
+                diagrams_dir = Path(config.app.output_dir).resolve() / "diagrams"
+                diagrams_dir.mkdir(parents=True, exist_ok=True)
+                svg_path = diagrams_dir / f"{req.diagram_type}.svg"
+                png_path = diagrams_dir / f"{req.diagram_type}.png"
+
+                yield {
+                    "event": "progress",
+                    "data": json.dumps({"pct": 40, "message": "Rendering SVG…"}),
+                }
+                import subprocess as _sp
+                proc = await asyncio.to_thread(
+                    _sp.run,
+                    ["node", str(render_script), "github-dark"],
+                    input=mermaid_code,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(analyser._beautiful_mermaid_dir),
+                    timeout=30,
+                )
+                if proc.returncode != 0:
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"message": f"Mermaid render failed: {proc.stderr}"}),
+                    }
+                    return
+
+                svg_content = _upscale_svg(proc.stdout, scale=4)
+                svg_path.write_text(svg_content, encoding="utf-8")
+
+                yield {
+                    "event": "progress",
+                    "data": json.dumps({"pct": 80, "message": "Converting to PNG…"}),
+                }
+                png_generated = False
+                try:
+                    import cairosvg as _cairosvg
+                    await asyncio.to_thread(
+                        _cairosvg.svg2png,
+                        bytestring=svg_content.encode(),
+                        write_to=str(png_path),
+                        output_width=2400,
+                    )
+                    png_generated = True
+                except (ImportError, OSError) as _exc:
+                    logger.warning("cairosvg PNG conversion unavailable: %s", _exc)
+
+                final_path = png_path if png_generated else svg_path
+                result = DiagramResponse(
+                    diagram_type=req.diagram_type,
+                    image_path=str(final_path.resolve()),
+                    svg_path=str(svg_path.resolve()),
+                    png_path=str(png_path.resolve()) if png_generated else None,
+                    mermaid_code=mermaid_code,
+                    is_fallback=False,
+                    message=(
+                        "Diagram generated with Beautiful Mermaid."
+                        + ("" if png_generated else " PNG unavailable (install cairo).")
+                    ),
+                )
+                yield {
+                    "event": "complete",
+                    "data": json.dumps(result.model_dump(), default=_json_default),
+                }
+
+            else:
+                # ── PaperBanana pipeline ─────────────────────────────────────
+                # Emit the five named pipeline stages with approximate timing
+                # while the async task runs in the background.
+                from research_analyser.diagram_generator import DiagramGenerator
+
+                pb_stages = [
+                    (10, "Phase 1: Retrieval — selecting reference examples…"),
+                    (25, "Phase 2: Planning — building visual description…"),
+                    (45, "Phase 3: Styling — refining aesthetics…"),
+                    (65, "Phase 4: Visualization — rendering image…"),
+                    (85, "Phase 5: Critic — evaluating output…"),
+                ]
+                # Seconds to wait at each stage before advancing to the next
+                stage_delays = [12, 15, 15, 25, 15]
+
+                generator = DiagramGenerator(
+                    output_dir=str(config.app.output_dir) + "/diagrams",
+                )
+                task = asyncio.create_task(
+                    generator.generate(content, diagram_types=[req.diagram_type])
+                )
+
+                for (pct, msg), delay in zip(pb_stages, stage_delays):
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps({"pct": pct, "message": msg}),
+                    }
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=delay)
+                        break  # task finished before this stage's timeout
+                    except asyncio.TimeoutError:
+                        pass  # still running — advance to next stage label
+
+                diagrams = await task  # get result (or propagate exception)
+
+                if not diagrams:
+                    result = DiagramResponse(
+                        diagram_type=req.diagram_type,
+                        message="No diagram was generated.",
+                    )
+                else:
+                    d = diagrams[0]
+                    img_path = Path(d.image_path).resolve() if d.image_path else None
+                    result = DiagramResponse(
+                        diagram_type=req.diagram_type,
+                        image_path=str(img_path) if img_path else None,
+                        mermaid_code=getattr(d, "mermaid_code", None),
+                        is_fallback=getattr(d, "is_fallback", False),
+                        message="Diagram generated with PaperBanana.",
+                    )
+
+                yield {
+                    "event": "complete",
+                    "data": json.dumps(result.model_dump(), default=_json_default),
+                }
+
+        except Exception as _exc:
+            logger.error("Diagram stream generation failed: %s", _exc)
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": str(_exc)}),
+            }
+
+    return EventSourceResponse(_event_generator())

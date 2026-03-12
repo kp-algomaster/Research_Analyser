@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2 — 2026-03-12
+
+### Fixed
+- **Diagram progress notification stuck** — "Generating diagram…" notification now streams live phase messages (Phase 1: Retrieval → Phase 2: Planning → Phase 3: Styling → Phase 4: Visualization → Phase 5: Critic) instead of freezing on the initial message. Uses new `/diagrams/generate/stream` SSE endpoint.
+- **Cancellable diagram generation** — progress notification now has a Cancel button.
+
 ## 0.7.1 — 2026-03-12
 
 ### Fixed

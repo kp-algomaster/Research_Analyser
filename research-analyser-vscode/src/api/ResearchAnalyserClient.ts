@@ -85,6 +85,13 @@ export interface IResearchAnalyserClient {
   downloadMonkeyOcr(): Promise<MonkeyOCRDownloadResult>;
   deleteMonkeyOcr(): Promise<MonkeyOCRDeleteResult>;
   generateDiagram(text: string, diagramType: string): Promise<DiagramResult>;
+  generateDiagramStream(
+    text: string,
+    diagramType: string,
+    engine: string,
+    onProgress: (event: import("../types").ProgressEvent) => void,
+    signal?: AbortSignal
+  ): Promise<DiagramResult>;
 }
 
 function getBaseUrl(): string {
@@ -316,6 +323,76 @@ export class ResearchAnalyserClient implements IResearchAnalyserClient {
   // -----------------------------------------------------------------------
   // Diagram generation from text
   // -----------------------------------------------------------------------
+
+  async generateDiagramStream(
+    text: string,
+    diagramType: string,
+    engine: string,
+    onProgress: (event: import("../types").ProgressEvent) => void,
+    signal?: AbortSignal
+  ): Promise<DiagramResult> {
+    const resp = await fetch(`${getBaseUrl()}/diagrams/generate/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, diagram_type: diagramType, engine }),
+      signal,
+    });
+
+    if (!resp.ok) {
+      throw new Error(`Server error ${resp.status}`);
+    }
+    if (!resp.body) {
+      throw new Error("Server returned no body for SSE stream");
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let currentEvent = "";
+
+    return new Promise<DiagramResult>((resolve, reject) => {
+      const pump = async (): Promise<void> => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              reject(new Error("SSE stream ended without completion event"));
+              return;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                currentEvent = line.slice(6).trim();
+              } else if (line.startsWith("data:")) {
+                const dataStr = line.slice(5).trim();
+                try {
+                  const data = JSON.parse(dataStr);
+                  if (currentEvent === "progress") {
+                    onProgress(data as import("../types").ProgressEvent);
+                  } else if (currentEvent === "complete") {
+                    resolve(data as DiagramResult);
+                    return;
+                  } else if (currentEvent === "error") {
+                    reject(new Error(data.message ?? "Diagram generation failed"));
+                    return;
+                  }
+                } catch {
+                  // malformed JSON — skip
+                }
+                currentEvent = "";
+              }
+            }
+          }
+        } catch (e) {
+          reject(e);
+        }
+      };
+      pump();
+    });
+  }
 
   async generateDiagram(text: string, diagramType: string, engine: string = "paperbanana"): Promise<DiagramResult> {
     const resp = await fetchWithTimeout(
